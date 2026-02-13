@@ -94,7 +94,7 @@ local Config = {
         TargetVendingMode = "All",
         SelectedVendMode = 0,
         ItemMode = "Deposit",
-        CoinMode = "Deposit",
+        CoinMode = "Dupe = 2",
         AtmMode = "Deposit",
         ChestMode = "Deposit",
         SelectedChestType = "All",
@@ -198,8 +198,8 @@ do
     local PART_TRANSPARENCY = 1 - 1e-7
     local START_INTENSITY = 1
 
-    local BLUR_OBJ = Lighting:FindFirstChild("IVM_Blur") or Instance.new("DepthOfFieldEffect")
-    BLUR_OBJ.Name = "IVM_Blur"
+    local BLUR_OBJ = Lighting:FindFirstChild("MOAI_Blur") or Instance.new("DepthOfFieldEffect")
+    BLUR_OBJ.Name = "MOAI_Blur"
     BLUR_OBJ.FarIntensity = 0
     BLUR_OBJ.NearIntensity = START_INTENSITY
     BLUR_OBJ.FocusDistance = 0.25
@@ -286,8 +286,8 @@ do
         camera = currentCam
 
         if not BLUR_OBJ or not BLUR_OBJ.Parent then
-            BLUR_OBJ = Lighting:FindFirstChild("IVM_Blur") or Instance.new("DepthOfFieldEffect")
-            BLUR_OBJ.Name = "IVM_Blur"
+            BLUR_OBJ = Lighting:FindFirstChild("MOAI_Blur") or Instance.new("DepthOfFieldEffect")
+            BLUR_OBJ.Name = "MOAI_Blur"
             BLUR_OBJ.FarIntensity = 0
             BLUR_OBJ.NearIntensity = START_INTENSITY
             BLUR_OBJ.FocusDistance = 0.25
@@ -308,7 +308,7 @@ do
 
     function BlurredGui.new(frame, shape)
         local blurPart = Instance.new("Part")
-        blurPart.Name = "IVM_BlurPart"
+        blurPart.Name = "MOAI_BlurPart"
         blurPart.Size = Vector3.new(1, 1, 1) * 0.01
         blurPart.Anchored = true
         blurPart.CanCollide = false
