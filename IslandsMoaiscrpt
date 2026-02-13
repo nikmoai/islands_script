@@ -1,0 +1,3893 @@
+local ConfigFolder = "MOAIScriptIslands"
+local ConfigFile = ConfigFolder .. "/config.json"
+
+local function SaveCensorState(state)
+    if writefile and isfolder and makefolder and readfile and isfile then
+        if not isfolder(ConfigFolder) then makefolder(ConfigFolder) end
+        local data = {}
+        if isfile(ConfigFile) then
+            local success, decoded = pcall(function() return game:GetService("HttpService"):JSONDecode(readfile(ConfigFile)) end)
+            if success and type(decoded) == "table" then
+                data = decoded
+            end
+        end
+        data.user_censor = state
+        writefile(ConfigFile, game:GetService("HttpService"):JSONEncode(data))
+    end
+end
+
+local function LoadCensorState()
+    if isfile and isfile(ConfigFile) and readfile then
+        local success, data = pcall(function() return game:GetService("HttpService"):JSONDecode(readfile(ConfigFile)) end)
+        if success and type(data) == "table" and data.user_censor ~= nil then
+            return data.user_censor
+        end
+    end
+    return false
+end
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+local OldNC = nil
+local OldSickle = nil
+
+local function GetRemote(path)
+    return ReplicatedStorage.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:FindFirstChild(path)
+end
+
+local VENDING_OPEN = GetRemote("deGzdggahhjo/qkXeOxsmwiafothorpqogpS")
+local VENDING_EDIT = GetRemote("deGzdggahhjo/yceVHErjjNihyeXjwKeyzfnyrwmcnaWnCo")
+local VENDING_TRANS = GetRemote("deGzdggahhjo/yeuvbxxakbeqDdlofjxFiBwq")
+local VENDING_COINS_WITHDRAW = GetRemote("deGzdggahhjo/ytaJiyomainKgxefgrkF")
+local VENDING_COINS_DEPOSIT = GetRemote("deGzdggahhjo/ggzImj")
+local VENDING_CLOSE = GetRemote("deGzdggahhjo/QaardducNrilqsmxdiotkewau")
+local VENDING_MODE = GetRemote("deGzdggahhjo/rLPziSaNkyol")
+local ATM_REMOTE = GetRemote("TransactionBankBalance")
+local CHEST_TRANS = GetRemote("CLIENT_CHEST_TRANSACTION")
+local CLIENT_REQUEST_22 = ReplicatedStorage.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("client_request_22")
+local CLIENT_EAT_FOOD = ReplicatedStorage.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("CLIENT_EAT_FOOD")
+
+local IsExecComp = true
+local RequiredFuncs = {"hookfunction", "hookmetamethod", "newcclosure", "getrawmetatable", "setreadonly", "require"}
+for _, func in ipairs(RequiredFuncs) do
+    if not (getgenv and getgenv()[func]) and not _G[func] and not (debug and debug[func]) and type(getfenv()[func]) ~= "function" then
+        IsExecComp = false
+    end
+end
+
+if _G.VendingManagerCleanup then
+    pcall(_G.VendingManagerCleanup)
+end
+
+local Config = {
+    Delay = {
+        WithdrawLoop = 0.2,
+        VendingAction = 0.0001,
+        CoinLoop = 0.3,
+        AtmLoop = 0.1,
+        ChestLoop = 0.5,
+        EatLoop = 0.1,
+        OpeningSpeed = 0.1,
+        EspUpdate = 0.3,
+        TweenSpeed = 25,
+    },
+    Settings = {
+        VendingRadius = 15,
+        SelectionBoxUpdateRate = 2,
+        MaxSelectionBoxes = 20,
+        MaxVendingsPerCycle = 30,
+        MaxEspLabels = 2,
+        IgnoreRadius = false,
+        PressThreshold = 10,
+        PressWindow = 5,
+    },
+    State = {
+        TargetVendingMode = "All",
+        SelectedVendMode = 0,
+        ItemMode = "Deposit",
+        CoinMode = "Deposit",
+        AtmMode = "Deposit",
+        ChestMode = "Deposit",
+        SelectedChestType = "All",
+        SelectedChestItem = "Empty",
+        UseHeldItemChest = false,
+        ChestItemAmountValue = "",
+        SelectedOpenerType = "All",
+        SelectedSeed = "wheat",
+        SelectedMob = "slime",
+        AutoFarmEnabled = false,
+        InviteUsername = "",
+        SeasonChoice = "summer",
+        
+        ItemLoopGeneration = 0,
+        CoinLoopGeneration = 0,
+        AtmLoopGeneration = 0,
+        ChestLoopGeneration = 0,
+        
+        CoinActionInProgress = false,
+        SelectionModeEnabled = false,
+        OpeningEnabled = false,
+        LoopCoinEnabled = false,
+        LoopItemEnabled = false,
+        AtmLoopEnabled = false,
+        ChestLoopEnabled = false,
+        ChestOpenerEnabled = false,
+        ChestWalkEnabled = false,
+        SeedSpreaderEnabled = false,
+        EatLoopEnabled = false,
+        IsCleaningUp = false,
+        
+        EspEnabled = false,
+        EspScannerActive = false,
+        CircleToggle = false,
+        
+        ItemAmountValue = "",
+        PriceInputValue = "",
+        CoinInputValue = "",
+        ATMInputValue = "",
+        
+        LastOpeningTime = 0,
+        EspScanAccumulator = 0,
+    },
+    Cache = {
+        MountedInventoryView = nil,
+        VendingBoundingBox = setmetatable({}, {__mode = "k"}),
+        SelectedVendingMachines = setmetatable({}, {__mode = "k"}),
+        SelectionBoxLines = setmetatable({}, {__mode = "k"}),
+        EspLabels = setmetatable({}, {__mode = "k"}),
+        EspCache = setmetatable({}, {__mode = "k"}),
+        CachedVendingMachines = {},
+        LabelPool = {},
+        CircleLines = {},
+        ActiveConnections = {},
+        ActiveLoops = {},
+        AllBackpackItems = {},
+        FilteredItems = {},
+        CurrentFarmTween = nil,
+        ItemNameMap = {},
+        SeasonPresses = {},
+        ChestMap = {
+            ["All"] = "All",
+            ["Expanded Diamond Chest"] = "diamondChestT2",
+            ["Diamond Chest"] = "diamondChestT1",
+            ["Industrial Medium Chest"] = "chestMediumIndustrial",
+            ["Medium Chest"] = "chestMedium",
+            ["Industrial Medium Chest (IO)"] = "chestMediumIndustrialIO",
+            ["Timed Industrial Chest"] = "chestIndustrialTimed",
+            ["Large Chest"] = "chestLarge",
+            ["Industrial Large Chest"] = "chestLargeIndustrial",
+            ["Industrial Large Chest (IO)"] = "chestLargeIndustrialIO",
+            ["Small Chest"] = "chestSmall"
+        }
+    }
+}
+
+local function AddConn(conn)
+    table.insert(Config.Cache.ActiveConnections, conn)
+    return conn
+end
+
+local function AddLoop(thread)
+    for i = #Config.Cache.ActiveLoops, 1, -1 do
+        local t = Config.Cache.ActiveLoops[i]
+        if not t or coroutine.status(t) == "dead" then
+            table.remove(Config.Cache.ActiveLoops, i)
+        end
+    end
+    table.insert(Config.Cache.ActiveLoops, thread)
+    return thread
+end
+
+local BlurModule = {}
+do
+    local Lighting = game:GetService("Lighting")
+    local RunService = game:GetService("RunService")
+    local camera = workspace.CurrentCamera
+
+    local BLUR_SIZE = Vector2.new(12, 3)
+    local PART_SIZE = 0.01
+    local PART_TRANSPARENCY = 1 - 1e-7
+    local START_INTENSITY = 1
+
+    local BLUR_OBJ = Lighting:FindFirstChild("IVM_Blur") or Instance.new("DepthOfFieldEffect")
+    BLUR_OBJ.Name = "IVM_Blur"
+    BLUR_OBJ.FarIntensity = 0
+    BLUR_OBJ.NearIntensity = START_INTENSITY
+    BLUR_OBJ.FocusDistance = 0.25
+    BLUR_OBJ.InFocusRadius = 0
+    BLUR_OBJ.Parent = Lighting
+
+    local PartsList = {}
+    local BlursList = {}
+    local BlurObjects = {}
+    local BlurredGui = {}
+    BlurredGui.__index = BlurredGui
+
+    local function rayPlaneIntersect(planePos, planeNormal, rayOrigin, rayDirection)
+        local n = planeNormal
+        local d = rayDirection
+        local v = rayOrigin - planePos
+        local num = n.x*v.x + n.y*v.y + n.z*v.z
+        local den = n.x*d.x + n.y*d.y + n.z*d.z
+        local a = -num / den
+        return rayOrigin + a * rayDirection, a
+    end
+
+    local function rebuildPartsList()
+        PartsList = {}
+        BlursList = {}
+        for blurObj, part in pairs(BlurObjects) do
+            table.insert(PartsList, part)
+            table.insert(BlursList, blurObj)
+        end
+    end
+
+    local function updateGui(blurObj)
+        local frame = blurObj.Frame
+        local visible = true
+        local current = frame
+        while current and current:IsA("GuiObject") do
+            if not current.Visible then
+                visible = false
+                break
+            end
+            current = current.Parent
+        end
+
+        if not visible then
+            blurObj.Part.Transparency = 1
+            return
+        end
+        
+        local part = blurObj.Part
+        local mesh = blurObj.Mesh
+        
+        part.Transparency = PART_TRANSPARENCY
+        
+        local corner0 = frame.AbsolutePosition + BLUR_SIZE
+        local corner1 = corner0 + frame.AbsoluteSize - BLUR_SIZE*2
+        local ray0, ray1
+
+        if (blurObj.IgnoreGuiInset) then
+            ray0 = camera:ViewportPointToRay(corner0.X, corner0.Y, 1)
+            ray1 = camera:ViewportPointToRay(corner1.X, corner1.Y, 1)
+        else
+            ray0 = camera:ScreenPointToRay(corner0.X, corner0.Y, 1)
+            ray1 = camera:ScreenPointToRay(corner1.X, corner1.Y, 1)
+        end
+
+        local planeOrigin = camera.CFrame.Position + camera.CFrame.LookVector * (0.05 - camera.NearPlaneZ)
+        local planeNormal = camera.CFrame.LookVector
+        local pos0 = rayPlaneIntersect(planeOrigin, planeNormal, ray0.Origin, ray0.Direction)
+        local pos1 = rayPlaneIntersect(planeOrigin, planeNormal, ray1.Origin, ray1.Direction)
+
+        local pos0 = camera.CFrame:PointToObjectSpace(pos0)
+        local pos1 = camera.CFrame:PointToObjectSpace(pos1)
+
+        local size = pos1 - pos0
+        local center = (pos0 + pos1)/2
+
+        mesh.Offset = center
+        mesh.Scale = size / PART_SIZE
+    end
+
+    function BlurredGui.updateAll()
+        local currentCam = workspace.CurrentCamera
+        if not currentCam then return end
+        camera = currentCam
+
+        if not BLUR_OBJ or not BLUR_OBJ.Parent then
+            BLUR_OBJ = Lighting:FindFirstChild("IVM_Blur") or Instance.new("DepthOfFieldEffect")
+            BLUR_OBJ.Name = "IVM_Blur"
+            BLUR_OBJ.FarIntensity = 0
+            BLUR_OBJ.NearIntensity = START_INTENSITY
+            BLUR_OBJ.FocusDistance = 0.25
+            BLUR_OBJ.InFocusRadius = 0
+            BLUR_OBJ.Parent = Lighting
+        end
+
+        local cf = camera.CFrame
+        for i = 1, #BlursList do
+            if BlursList[i].Part.Parent ~= currentCam then
+                BlursList[i].Part.Parent = currentCam
+            end
+            BlursList[i].Part.CFrame = cf
+            updateGui(BlursList[i])
+        end
+        BLUR_OBJ.FocusDistance = 0.25 - camera.NearPlaneZ
+    end
+
+    function BlurredGui.new(frame, shape)
+        local blurPart = Instance.new("Part")
+        blurPart.Name = "IVM_BlurPart"
+        blurPart.Size = Vector3.new(1, 1, 1) * 0.01
+        blurPart.Anchored = true
+        blurPart.CanCollide = false
+        blurPart.CanTouch = false
+        blurPart.Material = Enum.Material.Glass
+        blurPart.Transparency = 1
+        blurPart.Parent = workspace.CurrentCamera
+
+        local mesh
+        if (shape == "Rectangle") then
+            mesh = Instance.new("BlockMesh")
+            mesh.Parent = blurPart
+        elseif (shape == "Oval") then
+            mesh = Instance.new("SpecialMesh")
+            mesh.MeshType = Enum.MeshType.Sphere
+            mesh.Parent = blurPart
+        end
+        
+        local ignoreInset = false
+        local currentObj = frame
+        while true do
+            currentObj = currentObj.Parent
+            if (currentObj and currentObj:IsA("ScreenGui")) then
+                ignoreInset = currentObj.IgnoreGuiInset
+                break
+            elseif (currentObj == nil) then
+                break
+            end
+        end
+
+        local new = setmetatable({
+            Frame = frame;
+            Part = blurPart;
+            Mesh = mesh;
+            IgnoreGuiInset = ignoreInset;
+        }, BlurredGui)
+
+        BlurObjects[new] = blurPart
+        rebuildPartsList()
+        return new
+    end
+
+    function BlurredGui:Destroy()
+        if self.Part then self.Part:Destroy() end
+        BlurObjects[self] = nil
+        rebuildPartsList()
+    end
+    
+    RunService:BindToRenderStep("IVM_BlurUpdate", Enum.RenderPriority.Camera.Value + 1, function()
+        BlurredGui.updateAll()
+    end)
+    
+    BlurModule = BlurredGui
+    BlurModule.Cleanup = function()
+        pcall(function() RunService:UnbindFromRenderStep("IVM_BlurUpdate") end)
+        if BLUR_OBJ then BLUR_OBJ:Destroy() end
+        for blurObj, part in pairs(BlurObjects) do
+            if part then part:Destroy() end
+        end
+        BlurObjects = {}
+        PartsList = {}
+        BlursList = {}
+    end
+end
+
+local Library = {}
+local UI = {
+    Colors = {
+        Background = Color3.fromRGB(18, 18, 22),
+        Sidebar = Color3.fromRGB(14, 14, 18),
+        Element = Color3.fromRGB(28, 28, 34),
+        ElementHover = Color3.fromRGB(38, 38, 44),
+        Accent = Color3.fromRGB(88, 101, 242),
+        Text = Color3.fromRGB(210, 210, 220),
+        TextDim = Color3.fromRGB(130, 130, 145),
+        Divider = Color3.fromRGB(40, 40, 45)
+    },
+    Font = Enum.Font.GothamBold,
+    FontBold = Enum.Font.GothamBlack,
+}
+
+local function create(class, props)
+    local inst = Instance.new(class)
+    local parent = props.Parent
+    
+    for i, v in pairs(props) do
+        if i ~= "Parent" then inst[i] = v end
+    end
+    
+    if parent then inst.Parent = parent end
+    return inst
+end
+
+function Library:Create(title)
+    local ScreenGui = create("ScreenGui", {
+        Name = "IslandsManagerUI",
+        ResetOnSpawn = false,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+        Parent = gethui and gethui() or CoreGui
+    })
+
+    local MainFrame = create("Frame", {
+        Name = "MainFrame",
+        Size = (UserInputService.TouchEnabled and not UserInputService.MouseEnabled) and UDim2.new(0, 450, 0, 320) or UDim2.new(0, 670, 0, 480),
+        Position = UDim2.new(0.5, 0, 0.5, 0),
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = UI.Colors.Background,
+        BackgroundTransparency = 0.08,
+        BorderSizePixel = 0,
+        ClipsDescendants = true,
+        Parent = ScreenGui
+    })
+
+    create("UICorner", {CornerRadius = UDim.new(0, 10), Parent = MainFrame})
+    create("UIStroke", {Color = UI.Colors.Divider, Thickness = 1, Parent = MainFrame})
+
+    local dragging, dragInput, dragStart, startPos
+    local dragTarget = UDim2.new(0.5, 0, 0.5, 0)
+    local IsHovering = false
+
+    local function handleDragStart(input)
+        if IsHovering then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = MainFrame.Position
+            dragTarget = MainFrame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end
+    
+    MainFrame.InputBegan:Connect(handleDragStart)
+    MainFrame.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
+    end)
+    
+    AddConn(UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            dragTarget = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end))
+
+    AddConn(RunService.RenderStepped:Connect(function(dt)
+        if dragging then
+            MainFrame.Position = MainFrame.Position:Lerp(dragTarget, math.clamp(dt * 20, 0, 1))
+        end
+    end))
+
+    local ToggleBtn = create("TextButton", {
+        Name = "ToggleUI",
+        Size = UDim2.new(0, 100, 0, 30),
+        Position = UDim2.new(0.5, 0, 0, 10),
+        AnchorPoint = Vector2.new(0.5, 0),
+        BackgroundColor3 = UI.Colors.Sidebar,
+        Text = "Toggle UI",
+        TextColor3 = UI.Colors.Accent,
+        Font = UI.FontBold,
+        TextSize = 14,
+        Parent = ScreenGui
+    })
+    create("UICorner", {CornerRadius = UDim.new(0, 8), Parent = ToggleBtn})
+    
+    local tDragging, tDragInput, tDragStart, tStartPos
+    local tDragTarget = ToggleBtn.Position
+
+    ToggleBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            tDragging = true
+            tDragStart = input.Position
+            tStartPos = ToggleBtn.Position
+            tDragTarget = ToggleBtn.Position
+            
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then tDragging = false end
+            end)
+        end
+    end)
+
+    ToggleBtn.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then tDragInput = input end
+    end)
+
+    AddConn(UserInputService.InputChanged:Connect(function(input)
+        if input == tDragInput and tDragging then
+            local delta = input.Position - tDragStart
+            tDragTarget = UDim2.new(tStartPos.X.Scale, tStartPos.X.Offset + delta.X, tStartPos.Y.Scale, tStartPos.Y.Offset + delta.Y)
+        end
+    end))
+
+    AddConn(RunService.RenderStepped:Connect(function(dt)
+        if tDragging then
+            ToggleBtn.Position = ToggleBtn.Position:Lerp(tDragTarget, math.clamp(dt * 20, 0, 1))
+        end
+    end))
+
+    ToggleBtn.MouseButton1Click:Connect(function()
+        MainFrame.Visible = not MainFrame.Visible
+    end)
+
+    local Sidebar = create("Frame", {
+        Name = "Sidebar",
+        Size = UDim2.new(0, 160, 1, 0),
+        BackgroundColor3 = UI.Colors.Sidebar,
+        BorderSizePixel = 0,
+        Parent = MainFrame
+    })
+    create("UICorner", {CornerRadius = UDim.new(0, 10), Parent = Sidebar})
+    create("Frame", {
+        Name = "SidebarFiller",
+        Size = UDim2.new(0, 10, 1, 0),
+        Position = UDim2.new(1, -10, 0, 0),
+        BackgroundColor3 = UI.Colors.Sidebar,
+        BorderSizePixel = 0,
+        Parent = Sidebar
+    })
+
+    create("TextLabel", {
+        Size = UDim2.new(1, -20, 0, 50),
+        Position = UDim2.new(0, 15, 0, 10),
+        BackgroundTransparency = 1,
+        Text = title,
+        TextColor3 = UI.Colors.Accent,
+        Font = UI.FontBold,
+        TextSize = 20,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = Sidebar
+    })
+
+    local TabContainer
+    if UserInputService.TouchEnabled and not UserInputService.MouseEnabled then
+        TabContainer = create("ScrollingFrame", {ScrollBarThickness = 4, AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarImageColor3 = Color3.fromRGB(60, 60, 65)})
+    else
+        TabContainer = create("Frame", {})
+    end
+    TabContainer.Size = UDim2.new(1, 0, 1, -130); TabContainer.Position = UDim2.new(0, 0, 0, 70); TabContainer.BackgroundTransparency = 1; TabContainer.BorderSizePixel = 0; TabContainer.Parent = Sidebar
+    create("UIListLayout", {Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder, Parent = TabContainer})
+
+    local ActiveTabIndicator = create("Frame", {Name = "ActiveTabIndicator", Size = UDim2.new(0, 4, 0, 24), BackgroundColor3 = UI.Colors.Accent, BackgroundTransparency = 0, Parent = Sidebar})
+    create("UICorner", {CornerRadius = UDim.new(0, 2), Parent = ActiveTabIndicator})
+
+    local ProfileFrame = create("Frame", {
+        Name = "ProfileFrame",
+        Size = UDim2.new(1, -20, 0, 50),
+        Position = UDim2.new(0, 10, 1, -60),
+        BackgroundColor3 = UI.Colors.Element,
+        BackgroundTransparency = 0.5,
+        BorderSizePixel = 0,
+        Parent = Sidebar
+    })
+    create("UICorner", {CornerRadius = UDim.new(0, 8), Parent = ProfileFrame})
+
+    BlurModule.new(ProfileFrame, "Rectangle")
+
+    local PFP = create("ImageLabel", {
+        Name = "PFP",
+        Size = UDim2.new(0, 36, 0, 36),
+        Position = UDim2.new(0, 8, 0.5, 0),
+        AnchorPoint = Vector2.new(0, 0.5),
+        BackgroundColor3 = Color3.fromRGB(200, 200, 210),
+        BackgroundTransparency = 1,
+        Parent = ProfileFrame
+    })
+    task.spawn(function()
+        PFP.Image = Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+    end)
+    create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = PFP})
+
+    local UsernameBtn = create("TextButton", {
+        Name = "UsernameBtn",
+        Size = UDim2.new(1, -55, 1, 0),
+        Position = UDim2.new(0, 55, 0, 0),
+        BackgroundTransparency = 1,
+        Text = LocalPlayer.Name,
+        TextColor3 = UI.Colors.Text,
+        Font = UI.FontBold,
+        TextSize = 14,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = ProfileFrame
+    })
+
+    local isNameBlurred = LoadCensorState()
+    UsernameBtn.Text = isNameBlurred and "########" or LocalPlayer.Name
+
+    UsernameBtn.MouseButton1Click:Connect(function()
+        isNameBlurred = not isNameBlurred
+        UsernameBtn.Text = isNameBlurred and "########" or LocalPlayer.Name
+        SaveCensorState(isNameBlurred)
+    end)
+
+    local ContentArea = create("Frame", {
+        Name = "ContentArea",
+        Size = UDim2.new(1, -160, 1, 0),
+        Position = UDim2.new(0, 160, 0, 0),
+        BackgroundTransparency = 1,
+        Parent = MainFrame
+    })
+
+    BlurModule.new(ContentArea, "Rectangle")
+
+    local BottomFade = create("Frame", {
+        Size = UDim2.new(1, 0, 0, 30),
+        Position = UDim2.new(0, 0, 1, -30),
+        BackgroundColor3 = UI.Colors.Background,
+        BorderSizePixel = 0,
+        ZIndex = 5,
+        Parent = ContentArea
+    })
+    create("UIGradient", {
+        Rotation = -90,
+        Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1)}),
+        Parent = BottomFade
+    })
+
+    local Pages = {}
+    local Tabs = {}
+    local FirstTab = true
+    local CurrentTab = nil
+    
+    local NotificationHolder = create("Frame", {
+        Name = "NotificationHolder",
+        Size = UDim2.new(0, 250, 1, -20),
+        Position = UDim2.new(1, -260, 0, 10),
+        BackgroundTransparency = 1,
+        ZIndex = 100,
+        Parent = ScreenGui
+    })
+    create("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 5), VerticalAlignment = Enum.VerticalAlignment.Bottom, Parent = NotificationHolder})
+
+    local Window = {}
+
+    function Window:Notify(props)
+        local notifs = {}
+        for _, v in ipairs(NotificationHolder:GetChildren()) do
+            if v:IsA("Frame") then table.insert(notifs, v) end
+        end
+        if #notifs >= 5 then
+            notifs[1]:Destroy()
+        end
+
+        local thread = task.spawn(function()
+            local NotifFrame = create("Frame", {Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1, ClipsDescendants = true, Parent = NotificationHolder})
+            local Content = create("Frame", {Size = UDim2.new(1, 0, 0, 75), Position = UDim2.new(1, 0, 0, 0), BackgroundColor3 = Color3.fromRGB(20, 20, 25), BackgroundTransparency = 0.2, Parent = NotifFrame})
+            create("UICorner", {CornerRadius = UDim.new(0, 8), Parent = Content})
+            
+            local exiting = false
+            
+            local NT = create("TextLabel", {Size = UDim2.new(1, -20, 0, 20), Position = UDim2.new(0, 10, 0, 8), BackgroundTransparency = 1, Text = props.Title or "Notification", TextColor3 = UI.Colors.Accent, Font = UI.FontBold, TextSize = 16, TextXAlignment = Enum.TextXAlignment.Left, Parent = Content})
+            local NC2 = create("TextLabel", {Size = UDim2.new(1, -20, 0, 40), Position = UDim2.new(0, 10, 0, 28), BackgroundTransparency = 1, Text = props.Content or "", TextColor3 = UI.Colors.Text, Font = UI.Font, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true, Parent = Content})
+
+            local function Close()
+                if exiting then return end
+                exiting = true
+                TweenService:Create(Content, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Position = UDim2.new(1, 50, 0, 0), BackgroundTransparency = 1}):Play()
+                TweenService:Create(NT, TweenInfo.new(0.3), {TextTransparency = 1}):Play()
+                TweenService:Create(NC2, TweenInfo.new(0.3), {TextTransparency = 1}):Play()
+                task.wait(0.3)
+                TweenService:Create(NotifFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, 0)}):Play()
+                task.wait(0.3)
+                NotifFrame:Destroy()
+            end
+
+            TweenService:Create(NotifFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 0, 75)}):Play()
+            TweenService:Create(Content, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2.new(0, 0, 0, 0)}):Play()
+            
+            local duration = props.Duration or 5
+            local elapsed = 0
+            while elapsed < duration do
+                if exiting then break end
+                task.wait(0.1)
+                elapsed = elapsed + 0.1
+            end
+            
+            if not exiting then
+                Close()
+            end
+        end)
+        AddLoop(thread)
+    end
+
+    function Window:CreateTab(name, icon)
+        local Page = Instance.new("ScrollingFrame")
+        Page.Name = name .. "Page"
+        Page.Size = UDim2.new(1, -20, 1, -10)
+        Page.Position = UDim2.new(0, 10, 0, 10)
+        Page.BackgroundTransparency = 1 
+        Page.ScrollBarThickness = 0
+        Page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        Page.ScrollBarImageColor3 = Color3.fromRGB(60, 60, 65)
+        Page.BorderSizePixel = 0
+        Page.Visible = false
+        Page.Parent = ContentArea
+
+        local PageLayout = Instance.new("UIListLayout")
+        PageLayout.Padding = UDim.new(0, 8)
+        PageLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        PageLayout.Parent = Page
+
+        local PagePadding = Instance.new("UIPadding")
+        PagePadding.PaddingBottom = UDim.new(0, 10)
+        PagePadding.Parent = Page
+
+        local TabButton = Instance.new("TextButton")
+        TabButton.Name = name .. "Tab"
+        TabButton.Size = UDim2.new(1, -20, 0, 42)
+        TabButton.BackgroundColor3 = UI.Colors.Sidebar
+        TabButton.BackgroundTransparency = 1
+        TabButton.BorderSizePixel = 0
+        TabButton.Text = name
+        TabButton.TextColor3 = UI.Colors.TextDim
+        TabButton.Font = UI.Font
+        TabButton.TextSize = 14
+        TabButton.TextXAlignment = Enum.TextXAlignment.Left
+        TabButton.Parent = TabContainer
+        
+        local TabPadding = Instance.new("UIPadding")
+        TabPadding.PaddingLeft = UDim.new(0, 15)
+        TabPadding.Parent = TabButton
+        
+        local TabIcon
+        if icon then
+            TabPadding.PaddingLeft = UDim.new(0, 45)
+            TabIcon = Instance.new("ImageLabel")
+            TabIcon.Size = UDim2.new(0, 20, 0, 20)
+            TabIcon.Position = UDim2.new(0, -30, 0.5, -10)
+            TabIcon.BackgroundTransparency = 1
+            TabIcon.Image = icon
+            TabIcon.ImageColor3 = UI.Colors.TextDim
+            TabIcon.Parent = TabButton
+        end
+
+        local function Activate()
+            if CurrentTab == TabButton then return end
+            CurrentTab = TabButton
+
+            for _, p in pairs(Pages) do p.Visible = false end
+            for _, t in pairs(Tabs) do
+                TweenService:Create(t.Btn, TweenInfo.new(0.2), {TextColor3 = UI.Colors.TextDim}):Play()
+                if t.Icon then TweenService:Create(t.Icon, TweenInfo.new(0.2), {ImageColor3 = UI.Colors.TextDim}):Play() end
+            end
+            Page.Visible = true
+            Page.Position = UDim2.new(0, 10, 0, 40)
+            TweenService:Create(Page, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2.new(0, 10, 0, 10)}):Play()
+            TweenService:Create(TabButton, TweenInfo.new(0.2), {TextColor3 = UI.Colors.Text}):Play()
+            if TabIcon then TweenService:Create(TabIcon, TweenInfo.new(0.2), {ImageColor3 = UI.Colors.Text}):Play() end
+            
+            local targetY = TabButton.AbsolutePosition.Y - Sidebar.AbsolutePosition.Y + (TabButton.AbsoluteSize.Y - ActiveTabIndicator.Size.Y.Offset) / 2
+            if FirstTab then
+                ActiveTabIndicator.Position = UDim2.new(0, 0, 0, targetY)
+            else
+                TweenService:Create(ActiveTabIndicator, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2.new(0, 0, 0, targetY)}):Play()
+            end
+        end
+
+        TabButton.MouseButton1Click:Connect(Activate)
+        table.insert(Pages, Page)
+        table.insert(Tabs, {Btn = TabButton, Icon = TabIcon})
+
+        if FirstTab then
+            task.defer(Activate)
+            Activate()
+            FirstTab = false
+        end
+
+        local TabObj = {}
+
+        function TabObj:CreateSection(text)
+            create("TextLabel", {Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Text = text, TextColor3 = UI.Colors.Accent, Font = UI.FontBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Parent = Page})
+        end
+
+        function TabObj:CreateButton(props)
+            local ButtonFrame = create("TextButton", {Size = UDim2.new(1, 0, 0, 42), BackgroundColor3 = UI.Colors.Element, BorderSizePixel = 0, Text = "", AutoButtonColor = false, Parent = Page})
+            create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = ButtonFrame})
+            local Stroke = create("UIStroke", {Color = UI.Colors.Accent, Transparency = 1, Thickness = 1, Parent = ButtonFrame})
+            create("TextLabel", {Size = UDim2.new(1, -10, 1, 0), Position = UDim2.new(0, 10, 0, 0), BackgroundTransparency = 1, Text = props.Name, TextColor3 = UI.Colors.Text, Font = UI.Font, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Parent = ButtonFrame})
+            create("ImageLabel", {Size = UDim2.new(0, 16, 0, 16), Position = UDim2.new(1, -26, 0.5, -8), BackgroundTransparency = 1, Image = "rbxassetid://7072721335", ImageColor3 = UI.Colors.TextDim, Parent = ButtonFrame})
+
+            ButtonFrame.MouseEnter:Connect(function()
+                IsHovering = true
+                TweenService:Create(ButtonFrame, TweenInfo.new(0.2), {BackgroundColor3 = UI.Colors.ElementHover}):Play()
+                TweenService:Create(Stroke, TweenInfo.new(0.2), {Transparency = 0.5}):Play()
+            end)
+            ButtonFrame.MouseLeave:Connect(function()
+                IsHovering = false
+                TweenService:Create(ButtonFrame, TweenInfo.new(0.2), {BackgroundColor3 = UI.Colors.Element}):Play()
+                TweenService:Create(Stroke, TweenInfo.new(0.2), {Transparency = 1}):Play()
+            end)
+            ButtonFrame.MouseButton1Click:Connect(function()
+                local ripple = Instance.new("Frame")
+                ripple.BackgroundColor3 = Color3.new(1,1,1)
+                ripple.BackgroundTransparency = 0.92
+                ripple.Size = UDim2.new(0,0,0,0)
+                ripple.Position = UDim2.new(0, Mouse.X - ButtonFrame.AbsolutePosition.X, 0, Mouse.Y - ButtonFrame.AbsolutePosition.Y)
+                ripple.Parent = ButtonFrame
+                local corner = Instance.new("UICorner", ripple)
+                corner.CornerRadius = UDim.new(1,0)
+                
+                ripple:TweenSizeAndPosition(UDim2.new(0, 100, 0, 100), UDim2.new(0, (Mouse.X - ButtonFrame.AbsolutePosition.X)-50, 0, (Mouse.Y - ButtonFrame.AbsolutePosition.Y)-50), "Out", "Quad", 0.5)
+                TweenService:Create(ripple, TweenInfo.new(0.5), {BackgroundTransparency = 1}):Play()
+                task.delay(0.5, function() ripple:Destroy() end)
+                
+                props.Callback()
+            end)
+        end
+
+        function TabObj:CreateToggle(props)
+            local ToggleFrame = create("TextButton", {Size = UDim2.new(1, 0, 0, 42), BackgroundColor3 = UI.Colors.Element, BorderSizePixel = 0, Text = "", AutoButtonColor = false, Parent = Page})
+            create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = ToggleFrame})
+            create("TextLabel", {Size = UDim2.new(1, -60, 1, 0), Position = UDim2.new(0, 10, 0, 0), BackgroundTransparency = 1, Text = props.Name, TextColor3 = UI.Colors.Text, Font = UI.Font, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Parent = ToggleFrame})
+            
+            local Switch = create("Frame", {Size = UDim2.new(0, 40, 0, 20), Position = UDim2.new(1, -50, 0.5, -10), BackgroundColor3 = UI.Colors.Sidebar, BorderSizePixel = 0, Parent = ToggleFrame})
+            create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = Switch})
+            local Dot = create("Frame", {Size = UDim2.new(0, 16, 0, 16), Position = UDim2.new(0, 2, 0.5, -8), BackgroundColor3 = UI.Colors.TextDim, BorderSizePixel = 0, Parent = Switch})
+            create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = Dot})
+
+            ToggleFrame.MouseEnter:Connect(function() IsHovering = true end)
+            ToggleFrame.MouseLeave:Connect(function() IsHovering = false end)
+
+            local Toggled = props.CurrentValue or false
+
+            local function Update()
+                if Toggled then
+                    TweenService:Create(Switch, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {BackgroundColor3 = UI.Colors.Accent}):Play()
+                    TweenService:Create(Dot, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2.new(1, -18, 0.5, -8), BackgroundColor3 = Color3.new(1,1,1)}):Play()
+                else
+                    TweenService:Create(Switch, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {BackgroundColor3 = UI.Colors.Sidebar}):Play()
+                    TweenService:Create(Dot, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2.new(0, 2, 0.5, -8), BackgroundColor3 = UI.Colors.TextDim}):Play()
+                end
+                props.Callback(Toggled)
+            end
+
+            ToggleFrame.MouseButton1Click:Connect(function()
+                Toggled = not Toggled
+                Update()
+                Window:Notify({Title = props.Name, Content = Toggled and "Enabled" or "Disabled", Duration = 1.5})
+            end)
+            
+            if Toggled then Update() end
+        end
+
+        function TabObj:CreateSlider(props)
+            local SliderFrame = create("Frame", {Size = UDim2.new(1, 0, 0, 60), BackgroundColor3 = UI.Colors.Element, BorderSizePixel = 0, Parent = Page})
+            create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = SliderFrame})
+            create("TextLabel", {Size = UDim2.new(1, -20, 0, 20), Position = UDim2.new(0, 10, 0, 5), BackgroundTransparency = 1, Text = props.Name, TextColor3 = UI.Colors.Text, Font = UI.Font, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Parent = SliderFrame})
+            local ValueLabel = create("TextLabel", {Size = UDim2.new(0, 50, 0, 20), Position = UDim2.new(1, -60, 0, 5), BackgroundTransparency = 1, Text = tostring(props.CurrentValue) .. (props.Suffix or ""), TextColor3 = UI.Colors.TextDim, Font = UI.Font, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Right, Parent = SliderFrame})
+
+            SliderFrame.MouseEnter:Connect(function() IsHovering = true end)
+            SliderFrame.MouseLeave:Connect(function() IsHovering = false end)
+
+            local SliderBar = create("TextButton", {Size = UDim2.new(1, -20, 0, 6), Position = UDim2.new(0, 10, 0, 40), BackgroundColor3 = UI.Colors.Sidebar, BorderSizePixel = 0, AutoButtonColor = false, Text = "", Parent = SliderFrame})
+            create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = SliderBar})
+            local Fill = create("Frame", {Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = UI.Colors.Accent, BorderSizePixel = 0, Parent = SliderBar})
+            create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = Fill})
+
+            local Min = props.Range[1]
+            local Max = props.Range[2]
+            local Current = props.CurrentValue or Min
+
+            local function Update(val)
+                local percent = math.clamp((val - Min) / (Max - Min), 0, 1)
+                TweenService:Create(Fill, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(percent, 0, 1, 0)}):Play()
+                
+                local inc = props.Increment or 1
+                val = math.floor(val / inc + 0.5) * inc
+                val = math.clamp(val, Min, Max)
+                
+                local displayVal = val
+                if inc < 1 then
+                    displayVal = string.format("%.1f", val)
+                else
+                    displayVal = math.floor(val)
+                end
+                
+                ValueLabel.Text = displayVal .. (props.Suffix or "")
+                props.Callback(val)
+            end
+
+            local dragging = false
+            
+            local function updateSlider(input)
+                local relativeX = input.Position.X - SliderBar.AbsolutePosition.X
+                local percent = math.clamp(relativeX / SliderBar.AbsoluteSize.X, 0, 1)
+                local val = Min + (Max - Min) * percent
+                Update(val)
+            end
+
+            SliderBar.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    dragging = true
+                    updateSlider(input)
+                end
+            end)
+            
+            UserInputService.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+            end)
+            UserInputService.InputChanged:Connect(function(input)
+                if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                    updateSlider(input)
+                end
+            end)
+            
+            Update(Current)
+            
+            local SliderObj = {}
+            function SliderObj:Disable() SliderFrame.Visible = false end
+            function SliderObj:Enable() SliderFrame.Visible = true end
+            return SliderObj
+        end
+
+        function TabObj:CreateInput(props)
+            local InputFrame = create("Frame", {Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = UI.Colors.Element, BorderSizePixel = 0, Parent = Page})
+            create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = InputFrame})
+            create("TextLabel", {Size = UDim2.new(0, 100, 1, 0), Position = UDim2.new(0, 10, 0, 0), BackgroundTransparency = 1, Text = props.Name, TextColor3 = UI.Colors.Text, Font = UI.Font, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Parent = InputFrame})
+
+            InputFrame.MouseEnter:Connect(function() IsHovering = true end)
+            InputFrame.MouseLeave:Connect(function() IsHovering = false end)
+
+            local TextBox = create("TextBox", {AnchorPoint = Vector2.new(1, 0.5), Size = UDim2.new(0, 150, 0, 24), Position = UDim2.new(1, -10, 0.5, 0), BackgroundColor3 = UI.Colors.Sidebar, BorderSizePixel = 0, Text = props.CurrentValue or "", PlaceholderText = props.PlaceholderText or "...", TextColor3 = UI.Colors.Text, PlaceholderColor3 = UI.Colors.TextDim, Font = UI.Font, TextSize = 14, Parent = InputFrame})
+            create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = TextBox})
+
+            local function UpdateSize()
+                local txt = TextBox.Text
+                if txt == "" then txt = TextBox.PlaceholderText end
+                local bounds = game:GetService("TextService"):GetTextSize(txt, 14, UI.Font, Vector2.new(9999, 24))
+                local maxW = InputFrame.AbsoluteSize.X - 120
+                if maxW < 50 then maxW = 50 end
+                local targetW = math.clamp(bounds.X + 24, 50, maxW)
+                TweenService:Create(TextBox, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0, targetW, 0, 24)}):Play()
+            end
+
+            TextBox:GetPropertyChangedSignal("Text"):Connect(UpdateSize)
+            InputFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(UpdateSize)
+
+            TextBox.FocusLost:Connect(function()
+                props.Callback(TextBox.Text)
+                if props.RemoveTextAfterFocusLost then
+                    TextBox.Text = ""
+                end
+            end)
+            
+            task.delay(0.05, UpdateSize)
+        end
+
+        function TabObj:CreateDropdown(props)
+            local DropdownFrame = create("Frame", {Size = UDim2.new(1, 0, 0, 42), BackgroundColor3 = UI.Colors.Element, BorderSizePixel = 0, ClipsDescendants = true, Parent = Page})
+            create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = DropdownFrame})
+            local Header = create("TextButton", {Size = UDim2.new(1, 0, 0, 42), BackgroundTransparency = 1, BorderSizePixel = 0, Text = "", Parent = DropdownFrame})
+            create("TextLabel", {Size = UDim2.new(1, -40, 1, 0), Position = UDim2.new(0, 10, 0, 0), BackgroundTransparency = 1, Text = props.Name, TextColor3 = UI.Colors.Text, Font = UI.Font, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Parent = Header})
+
+            DropdownFrame.MouseEnter:Connect(function() IsHovering = true end)
+            DropdownFrame.MouseLeave:Connect(function() IsHovering = false end)
+
+            local SelectedLabel = create("TextLabel", {Size = UDim2.new(0, 150, 1, 0), Position = UDim2.new(1, -180, 0, 0), BackgroundTransparency = 1, Text = (props.CurrentOption and props.CurrentOption[1]) or "None", TextColor3 = UI.Colors.Accent, Font = UI.Font, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Right, Parent = Header})
+            local Arrow = create("ImageLabel", {Size = UDim2.new(0, 16, 0, 16), Position = UDim2.new(1, -26, 0.5, -8), BackgroundTransparency = 1, Image = "rbxassetid://6031091004", ImageColor3 = UI.Colors.TextDim, Parent = Header})
+            local Container = create("ScrollingFrame", {Size = UDim2.new(1, -10, 0, 150), Position = UDim2.new(0, 5, 0, 45), BackgroundTransparency = 1, ScrollBarThickness = 2, ScrollBarImageColor3 = Color3.fromRGB(60, 60, 65), BorderSizePixel = 0, Parent = DropdownFrame})
+            create("UIListLayout", {Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Container})
+
+            local Open = false
+            local Options = props.Options or {}
+            local DropObj = {CurrentOption = props.CurrentOption}
+
+            local function RefreshList()
+                for _, c in pairs(Container:GetChildren()) do
+                    if c:IsA("TextButton") then c:Destroy() end
+                end
+                
+                for _, opt in ipairs(Options) do
+                    local isSelected = (DropObj.CurrentOption and DropObj.CurrentOption[1] == opt)
+                    local Btn = create("TextButton", {
+                        BorderSizePixel = 0,
+                        Size = UDim2.new(1, 0, 0, 30),
+                        BackgroundColor3 = isSelected and UI.Colors.Accent or Color3.fromRGB(18, 18, 22),
+                        TextColor3 = isSelected and Color3.fromRGB(235, 235, 245) or UI.Colors.TextDim,
+                        AutoButtonColor = false,
+                        Text = opt,
+                        Font = UI.Font,
+                        TextSize = 13,
+                        Parent = Container
+                    })
+                    create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = Btn})
+                    
+                    Btn.MouseEnter:Connect(function()
+                        if not isSelected then
+                            TweenService:Create(Btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(28, 28, 34)}):Play()
+                        end
+                    end)
+                    Btn.MouseLeave:Connect(function()
+                        if not isSelected then
+                            TweenService:Create(Btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(18, 18, 22)}):Play()
+                        end
+                    end)
+                    
+                    Btn.MouseButton1Down:Connect(function()
+                        TweenService:Create(Btn, TweenInfo.new(0.1), {BackgroundColor3 = UI.Colors.Accent, TextColor3 = Color3.fromRGB(235, 235, 245)}):Play()
+                    end)
+                    
+                    Btn.MouseButton1Click:Connect(function()
+                        if isSelected then
+                            SelectedLabel.Text = "None"
+                            DropObj.CurrentOption = {}
+                            props.Callback({})
+                        else
+                            SelectedLabel.Text = opt
+                            DropObj.CurrentOption = {opt}
+                            props.Callback({opt})
+                        end
+                        Open = false
+                        TweenService:Create(DropdownFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart), {Size = UDim2.new(1, 0, 0, 42)}):Play()
+                        TweenService:Create(Arrow, TweenInfo.new(0.3), {Rotation = 0}):Play()
+                    end)
+                end
+                Container.CanvasSize = UDim2.new(0, 0, 0, #Options * 32)
+            end
+
+            Header.MouseButton1Click:Connect(function()
+                Open = not Open
+                if Open then
+                    RefreshList()
+                    local height = math.min(#Options * 32 + 50, 200)
+                    TweenService:Create(DropdownFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart), {Size = UDim2.new(1, 0, 0, height)}):Play()
+                    TweenService:Create(Arrow, TweenInfo.new(0.3), {Rotation = 180}):Play()
+                else
+                    TweenService:Create(DropdownFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart), {Size = UDim2.new(1, 0, 0, 42)}):Play()
+                    TweenService:Create(Arrow, TweenInfo.new(0.3), {Rotation = 0}):Play()
+                end
+            end)
+
+            function DropObj:Refresh(newOptions, default)
+                Options = newOptions
+                if default then
+                    SelectedLabel.Text = default
+                    DropObj.CurrentOption = {default}
+                end
+                if Open then RefreshList() end
+            end
+
+            return DropObj
+        end
+
+        function TabObj:CreateDivider()
+            local Div = create("Frame", {Size = UDim2.new(1, 0, 0, 2), BackgroundColor3 = UI.Colors.Divider, BorderSizePixel = 0, Parent = Page})
+            create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = Div})
+        end
+
+        return TabObj
+    end
+
+    function Window:Destroy()
+        ScreenGui:Destroy()
+    end
+
+    return Window
+end
+
+local Window = Library:Create("Pooke's IVM")
+
+local VendingTab = Window:CreateTab("Vending", "rbxassetid://6942650339")
+local ChestTab = Window:CreateTab("Chest", "rbxassetid://99252073072597")
+local ATMTab = Window:CreateTab("ATM", "rbxassetid://14832381261")
+local OpeningTab = Window:CreateTab("Opening", "rbxassetid://78111289121317")
+local CombatTab = Window:CreateTab("Combat", "rbxassetid://95264995174476")
+local MiscTab = Window:CreateTab("Misc", "rbxassetid://136882854117051")
+local SettingsTab = Window:CreateTab("Settings", "rbxassetid://7059346373")
+
+local function FixName(name)
+    local newName = name:gsub("(%l)(%u)", "%1 %2")
+    newName = newName:sub(1,1):upper() .. newName:sub(2)
+    newName = newName:gsub("_", " ")
+    return newName
+end
+
+local function ShortNum(num)
+    if num >= 1_000_000_000_000 then
+        return string.format("%.1f", num / 1_000_000_000_000) .. "T"
+    elseif num >= 1_000_000_000 then
+        return string.format("%.1f", num / 1_000_000_000) .. "B"
+    elseif num >= 1_000_000 then
+        return string.format("%.1f", num / 1_000_000) .. "M"
+    elseif num >= 1_000 then
+        return string.format("%.1f", num / 1_000) .. "K"
+    else
+        return tostring(math.floor(num))
+    end
+end
+
+local function RegItem(internal, arg)
+    local display
+    local tools = ReplicatedStorage:FindFirstChild("Tools")
+    local tool = tools and tools:FindFirstChild(internal)
+    if tool then
+        local dn = tool:FindFirstChild("DisplayName")
+        if dn and dn:IsA("StringValue") then
+            display = dn.Value
+        end
+    end
+    if not display then
+        display = FixName(internal)
+    end
+    
+    local amount = 0
+    if type(arg) == "number" then
+        amount = arg
+    elseif typeof(arg) == "Instance" then
+        local v = arg:FindFirstChild("Amount") or arg:FindFirstChild("Value")
+        if v and (v:IsA("IntValue") or v:IsA("NumberValue")) then
+            amount = v.Value
+        else
+            amount = 1
+        end
+    end
+
+    if amount > 1 then
+        display = display .. " (" .. ShortNum(amount) .. ")"
+    end
+
+    Config.Cache.ItemNameMap[display] = internal
+    return display
+end
+
+local function GetBox(vendingModel)
+    if not vendingModel then return nil end
+    if Config.Cache.VendingBoundingBox[vendingModel] then return Config.Cache.VendingBoundingBox[vendingModel] end
+    
+    local minX, minY, minZ = math.huge, math.huge, math.huge
+    local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+    local hasValidParts = false
+    
+    local sellingContents = vendingModel:FindFirstChild("SellingContents")
+    
+    for _, d in ipairs(vendingModel:GetDescendants()) do
+        if d:IsA("BasePart") then
+            if sellingContents and d:IsDescendantOf(sellingContents) then
+                continue
+            end
+            
+            local pos = d.Position
+            local size = d.Size
+            
+            local halfSize = size * 0.5
+            
+            local cf = d.CFrame
+            local corners = {
+                cf * Vector3.new(-halfSize.X, -halfSize.Y, -halfSize.Z),
+                cf * Vector3.new(halfSize.X, -halfSize.Y, -halfSize.Z),
+                cf * Vector3.new(halfSize.X, halfSize.Y, -halfSize.Z),
+                cf * Vector3.new(-halfSize.X, halfSize.Y, -halfSize.Z),
+                cf * Vector3.new(-halfSize.X, -halfSize.Y, halfSize.Z),
+                cf * Vector3.new(halfSize.X, -halfSize.Y, halfSize.Z),
+                cf * Vector3.new(halfSize.X, halfSize.Y, halfSize.Z),
+                cf * Vector3.new(-halfSize.X, halfSize.Y, halfSize.Z),
+            }
+            
+            for _, corner in ipairs(corners) do
+                minX = math.min(minX, corner.X)
+                maxX = math.max(maxX, corner.X)
+                minY = math.min(minY, corner.Y)
+                maxY = math.max(maxY, corner.Y)
+                minZ = math.min(minZ, corner.Z)
+                maxZ = math.max(maxZ, corner.Z)
+            end
+            hasValidParts = true
+        end
+    end
+    
+    if not hasValidParts or minX == math.huge then return nil end
+    
+    local result = {
+        min = Vector3.new(minX, minY, minZ),
+        max = Vector3.new(maxX, maxY, maxZ),
+        center = Vector3.new((minX + maxX)/2, (minY + maxY)/2, (minZ + maxZ)/2)
+    }
+    Config.Cache.VendingBoundingBox[vendingModel] = result
+    return result
+end
+
+local function FreeLabel(lab)
+    if not lab then return end
+    pcall(function()
+        lab.Visible = false
+        lab.Text = ""
+    end)
+    table.insert(Config.Cache.LabelPool, lab)
+end
+
+local function GetLabel()
+    local label
+    if #Config.Cache.LabelPool > 0 then
+        label = table.remove(Config.Cache.LabelPool)
+    else
+        label = Drawing.new("Text")
+        label.Size = 14
+        label.Center = true
+        label.Outline = true
+    end
+    label.Visible = true
+    return label
+end
+
+local function ScanLoop()
+    while Config.State.EspEnabled do
+        local newCache = {}
+        local islands = Workspace:FindFirstChild("Islands")
+        if islands then
+            for _, island in ipairs(islands:GetChildren()) do
+                if not Config.State.EspEnabled then break end
+                local blocks = island:FindFirstChild("Blocks")
+                if blocks then
+                    for _, v in ipairs(blocks:GetChildren()) do
+                        if v.Name == "vendingMachine1" or v.Name == "vendingMachine" or v.Name == "vendingMachineIndustrial" then
+                            local part = v:FindFirstChildWhichIsA("BasePart") or v.PrimaryPart
+                            if part then
+                                table.insert(newCache, {v = v, part = part})
+                            end
+                        end
+                    end
+                end
+                task.wait()
+            end
+        end
+        Config.Cache.CachedVendingMachines = newCache
+        task.wait(1)
+    end
+    Config.State.EspScannerActive = false
+end
+
+local function ScanEsp()
+    if not Config.State.EspEnabled then return end
+    
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local hrpPos = hrp.Position
+
+    local candidates = {}
+    local cachedMachines = Config.Cache.CachedVendingMachines
+    local t_insert = table.insert
+    
+    for i = 1, #cachedMachines do
+        local data = cachedMachines[i]
+        if data.v and data.v.Parent and data.part and data.part.Parent then
+            local distSq = (data.part.Position - hrpPos).Magnitude ^ 2
+            t_insert(candidates, {v = data.v, part = data.part, distSq = distSq})
+        end
+    end
+    
+    table.sort(candidates, function(a,b) return a.distSq < b.distSq end)
+    
+    local active = {}
+    local espLabels = Config.Cache.EspLabels
+    local maxLabels = Config.Settings.MaxEspLabels
+    local limit = math.min(#candidates, maxLabels)
+    local color = Color3.fromRGB(215, 100, 255)
+    
+    for i = 1, limit do
+        local entry = candidates[i]
+        local v = entry.v
+        active[v] = true
+        
+        local labelData = espLabels[v]
+        if not labelData then
+            labelData = {label = GetLabel(), v = v, part = entry.part}
+            espLabels[v] = labelData
+        end
+        
+        local coinBalance = v:FindFirstChild("CoinBalance")
+        local coins = coinBalance and coinBalance.Value or 0
+        local contents = v:FindFirstChild("SellingContents")
+        local itemCount = 0
+        if contents then
+            local items = contents:GetChildren()
+            for j = 1, #items do
+                local amt = items[j]:FindFirstChild("Amount")
+                if amt then itemCount = itemCount + amt.Value end
+            end
+        end
+        
+        labelData.label.Text = string.format("Coins: %s\nItems: %s", ShortNum(coins), ShortNum(itemCount))
+        labelData.label.Color = color
+    end
+    
+    for v, data in pairs(espLabels) do
+        if not active[v] then
+            FreeLabel(data.label)
+            espLabels[v] = nil
+        end
+    end
+end
+
+local function RenderEsp()
+    if not Config.State.EspEnabled then return end
+    local cam = workspace.CurrentCamera
+    local espLabels = Config.Cache.EspLabels
+    local vec3_new = Vector3.new
+    local vec2_new = Vector2.new
+    local offset = vec3_new(0, 2, 0)
+    
+    for v, data in pairs(espLabels) do
+        if v.Parent and data.part.Parent then
+            local pos = data.part.Position + offset
+            local screenPos, onScreen = cam:WorldToViewportPoint(pos)
+            local label = data.label
+            if onScreen then
+                label.Position = vec2_new(screenPos.X, screenPos.Y)
+                label.Visible = true
+            else
+                label.Visible = false
+            end
+        else
+            FreeLabel(data.label)
+            espLabels[v] = nil
+        end
+    end
+end
+
+local function DrawBoxes()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    
+    for vending, lines in pairs(Config.Cache.SelectionBoxLines) do
+        if not Config.Cache.SelectedVendingMachines[vending] or not vending.Parent then
+            for _, line in ipairs(lines) do
+                pcall(function() line.Visible = false; line:Remove() end)
+            end
+            Config.Cache.SelectionBoxLines[vending] = nil
+            if not vending.Parent then
+                Config.Cache.SelectedVendingMachines[vending] = nil
+            end
+        end
+    end
+    
+    local selectedList = {}
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    
+    local selectionCount = 0
+    for _ in pairs(Config.Cache.SelectedVendingMachines) do selectionCount = selectionCount + 1 end
+
+    if selectionCount > Config.Settings.MaxSelectionBoxes then
+        for vending, _ in pairs(Config.Cache.SelectedVendingMachines) do
+            if hrp then
+                local part = vending:FindFirstChildWhichIsA("BasePart") or vending.PrimaryPart
+                local dist = part and (part.Position - hrp.Position).Magnitude or 0
+                table.insert(selectedList, {machine = vending, dist = dist})
+            else
+                table.insert(selectedList, {machine = vending, dist = 0})
+            end
+        end
+        table.sort(selectedList, function(a, b) return a.dist < b.dist end)
+    else
+        for vending, _ in pairs(Config.Cache.SelectedVendingMachines) do
+            table.insert(selectedList, {machine = vending})
+        end
+    end
+    
+    local displayBoxes = {}
+    for i = 1, math.min(#selectedList, Config.Settings.MaxSelectionBoxes) do
+        displayBoxes[selectedList[i].machine] = true
+    end
+    
+    for vending, lines in pairs(Config.Cache.SelectionBoxLines) do
+        if not displayBoxes[vending] then
+            for _, line in ipairs(lines) do
+                pcall(function() line:Remove() end)
+            end
+            Config.Cache.SelectionBoxLines[vending] = nil
+        end
+    end
+    
+    for vending, _ in pairs(displayBoxes) do
+        if not vending.Parent then continue end
+        local bbox = GetBox(vending)
+        if not bbox then
+            if Config.Cache.SelectionBoxLines[vending] then
+                for _, line in ipairs(Config.Cache.SelectionBoxLines[vending]) do
+                    pcall(function() line.Visible = false; line:Remove() end)
+                end
+                Config.Cache.SelectionBoxLines[vending] = nil
+            end
+            continue
+        end
+        
+        local min, max = bbox.min, bbox.max
+        local corners = {
+            Vector3.new(min.X, min.Y, min.Z),
+            Vector3.new(max.X, min.Y, min.Z),
+            Vector3.new(max.X, max.Y, min.Z),
+            Vector3.new(min.X, max.Y, min.Z),
+            Vector3.new(min.X, min.Y, max.Z),
+            Vector3.new(max.X, min.Y, max.Z),
+            Vector3.new(max.X, max.Y, max.Z),
+            Vector3.new(min.X, max.Y, max.Z),
+        }
+        
+        local edges = {
+            {1,2}, {2,3}, {3,4}, {4,1},
+            {5,6}, {6,7}, {7,8}, {8,5},
+            {1,5}, {2,6}, {3,7}, {4,8}
+        }
+        
+        if not Config.Cache.SelectionBoxLines[vending] then
+            Config.Cache.SelectionBoxLines[vending] = {}
+            for i = 1, 12 do
+                local line = Drawing.new("Line")
+                line.Color = Color3.fromRGB(215, 100, 255)
+                line.Thickness = 2
+                line.Transparency = 0.5
+                table.insert(Config.Cache.SelectionBoxLines[vending], line)
+            end
+        end
+        
+        local lineIndex = 1
+        for _, edge in ipairs(edges) do
+            local p1 = corners[edge[1]]
+            local p2 = corners[edge[2]]
+            local sp1, vis1 = cam:WorldToViewportPoint(p1)
+            local sp2, vis2 = cam:WorldToViewportPoint(p2)
+            
+            local line = Config.Cache.SelectionBoxLines[vending][lineIndex]
+            if vis1 and vis2 then
+                line.From = Vector2.new(sp1.X, sp1.Y)
+                line.To = Vector2.new(sp2.X, sp2.Y)
+                line.Visible = true
+            else
+                line.Visible = false
+            end
+            lineIndex = lineIndex + 1
+        end
+    end
+end
+
+local function CheckVending(vendingMachine)
+    if not Config.State.SelectionModeEnabled then return true end
+    return Config.Cache.SelectedVendingMachines[vendingMachine] == true
+end
+
+local function GetInv()
+    table.clear(Config.Cache.ItemNameMap)
+    local counts = {}
+    local Backpack = LocalPlayer:WaitForChild("Backpack")
+    for _, item in ipairs(Backpack:GetChildren()) do
+        local amt = 1
+        local val = item:FindFirstChild("Amount") or item:FindFirstChild("Value")
+        if val and (val:IsA("IntValue") or val:IsA("NumberValue")) then
+            amt = val.Value
+        end
+        counts[item.Name] = (counts[item.Name] or 0) + amt
+    end
+
+    local items = {}
+    for name, count in pairs(counts) do
+        table.insert(items, RegItem(name, count))
+    end
+    
+    table.sort(items)
+    return #items > 0 and items or {"Empty"}
+end
+
+local function ParseNum(txt)
+    txt = tostring(txt or ""):upper():gsub("%s", "")
+    local num, suffix = txt:match("^([%d%.]+)([KMB]?)$")
+    if not num then return nil end
+    
+    num = tonumber(num)
+    if not num then return nil end
+    
+    if suffix == "K" or suffix == "k" then
+        return math.floor(num * 1_000)
+    elseif suffix == "M" or suffix == "m" then
+        return math.floor(num * 1_000_000)
+    elseif suffix == "B" or suffix == "b" then
+        return math.floor(num * 1_000_000_000)
+    else
+        return math.floor(num)
+    end
+end
+
+local function GetVendings()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return {} end
+
+    local islands = Workspace:FindFirstChild("Islands")
+    if not islands then return {} end
+
+    local candidates = {}
+    local radiusSq = Config.Settings.VendingRadius * Config.Settings.VendingRadius
+    local hrpPos = hrp.Position
+
+    local processedCount = 0
+    for _, island in ipairs(islands:GetChildren()) do
+        local blocks = island:FindFirstChild("Blocks")
+        if not blocks then continue end
+
+        for _, v in ipairs(blocks:GetChildren()) do
+            if v.Name ~= "vendingMachine1" and v.Name ~= "vendingMachine" and v.Name ~= "vendingMachineIndustrial" then continue end
+
+            processedCount = processedCount + 1
+            if processedCount % 1000 == 0 then task.wait() end
+
+            local part = v:FindFirstChildWhichIsA("BasePart")
+            if not part then continue end
+            
+            local pPos = part.Position
+            local dx = pPos.X - hrpPos.X
+            local dy = pPos.Y - hrpPos.Y
+            local dz = pPos.Z - hrpPos.Z
+            local distSq = dx*dx + dy*dy + dz*dz
+
+            if distSq > radiusSq then continue end
+            if not CheckVending(v) then continue end
+
+            if Config.State.TargetVendingMode ~= "All" then
+                local m = v:GetAttribute("Mode")
+                if m == nil then
+                    local modeVal = v:FindFirstChild("Mode")
+                    if modeVal then m = modeVal.Value end
+                end
+                m = m or 0
+                if Config.State.TargetVendingMode == "Sell" and m ~= 0 then continue end
+                if Config.State.TargetVendingMode == "Buy" and m ~= 1 then continue end
+            end
+
+            table.insert(candidates, {v = v, dist = distSq})
+        end
+    end
+
+    table.sort(candidates, function(a, b) return a.dist < b.dist end)
+    
+    local result = {}
+    for _, c in ipairs(candidates) do
+        table.insert(result, c.v)
+    end
+    return result
+end
+
+local function WithdrawItems(withdrawAll, customAmount, showNotif, loopGen, itemName)
+    if showNotif == nil then showNotif = true end
+    if loopGen and loopGen ~= Config.State.ItemLoopGeneration then return end
+
+    local queue = {}
+    local sortedVendings = GetVendings()
+
+    for _, v in ipairs(sortedVendings) do
+        if #queue >= Config.Settings.MaxVendingsPerCycle then break end
+
+            local contents = v:FindFirstChild("SellingContents")
+            if not contents or #contents:GetChildren() == 0 then continue end
+
+            if itemName and type(itemName) == "string" then
+                local it = contents:FindFirstChild(itemName)
+                if not it then
+                    for _, child in ipairs(contents:GetChildren()) do
+                        if child.Name:lower() == itemName:lower() then
+                            it = child
+                            break
+                        end
+                    end
+                end
+                if it then
+                    local amt = it:FindFirstChild("Amount")
+                    if amt and amt.Value > 0 then
+                        local withdrawAmount = amt.Value
+                        if customAmount and customAmount > 0 then
+                            withdrawAmount = math.min(customAmount, amt.Value)
+                        end
+                        if withdrawAmount > 0 then
+                            table.insert(queue, {v = v, items = {{tool = it, amount = withdrawAmount}}})
+                        end
+                    end
+                end
+            else
+                local itemsList = {}
+                for _, item in ipairs(contents:GetChildren()) do
+                    local amt = item:FindFirstChild("Amount")
+                    if amt and amt.Value > 0 then
+                        local withdrawAmount = amt.Value
+                        if customAmount and customAmount > 0 then
+                            withdrawAmount = math.min(customAmount, amt.Value)
+                        end
+                        if withdrawAmount > 0 then
+                            table.insert(itemsList, {tool = item, amount = withdrawAmount})
+                        end
+                    end
+                end
+                if #itemsList > 0 then
+                    table.insert(queue, {v = v, items = itemsList})
+                end
+            end
+    end
+
+    if #queue == 0 then return end
+
+    local processed = 0
+    local active = 0
+    for _, entry in ipairs(queue) do
+        local vendingRef = entry.v
+        active = active + 1
+        task.spawn(function()
+            for _, itEntry in ipairs(entry.items) do
+                local guid = HttpService:GenerateGUID(false)
+                VENDING_OPEN:FireServer(guid, {{vendingMachine = vendingRef}})
+                VENDING_EDIT:FireServer(guid, {{vendingMachine = vendingRef}})
+                task.wait(0.001)
+
+                VENDING_TRANS:FireServer(guid, {{
+                    player_tracking_category = "join_from_web",
+                    vendingMachine = vendingRef,
+                    action = "withdraw",
+                    tool = itEntry.tool,
+                    amount = itEntry.amount,
+                }})
+                
+                VENDING_CLOSE:FireServer({vendingMachine = vendingRef})
+                task.wait(0.001)
+            end
+            processed = processed + 1
+            active = active - 1
+        end)
+    end
+
+    while active > 0 do
+        if loopGen and loopGen ~= Config.State.ItemLoopGeneration then break end
+        task.wait(0.05)
+    end
+end
+
+local function WithdrawCoins(amount, showNotif, singleTransaction, loopGen)
+    if showNotif == nil then showNotif = true end
+    if loopGen and loopGen ~= Config.State.CoinLoopGeneration then return end
+    if Config.State.CoinActionInProgress then return end
+    Config.State.CoinActionInProgress = true
+    local queue = {}
+    for _, v in ipairs(GetVendings()) do
+        if loopGen and loopGen ~= Config.State.CoinLoopGeneration then Config.State.CoinActionInProgress = false; return end
+        local coinBalance = v:FindFirstChild("CoinBalance")
+        if coinBalance and coinBalance.Value > 0 then
+            table.insert(queue, v)
+        end
+        if #queue >= Config.Settings.MaxVendingsPerCycle then break end
+    end
+    if #queue == 0 then
+        Config.State.CoinActionInProgress = false
+        return
+    end
+    local processed = 0
+    local active = 0
+    for _, v in ipairs(queue) do
+        if loopGen and loopGen ~= Config.State.CoinLoopGeneration then break end
+        active = active + 1
+        task.spawn(function()
+            if loopGen and loopGen ~= Config.State.CoinLoopGeneration then active = active - 1; return end
+
+            local guid = HttpService:GenerateGUID(false)
+            VENDING_OPEN:FireServer(guid, {{vendingMachine = v}})
+            VENDING_EDIT:FireServer(guid, {{vendingMachine = v}})
+            task.wait(0.01)
+
+            if loopGen and loopGen ~= Config.State.CoinLoopGeneration then VENDING_CLOSE:FireServer({vendingMachine = v}); active = active - 1; return end
+
+            local withdrawAmount = amount
+            if withdrawAmount == nil then
+                local coinBalance = v:FindFirstChild("CoinBalance")
+                withdrawAmount = coinBalance and coinBalance.Value or 0
+            end
+
+            if withdrawAmount and withdrawAmount > 0 then
+                VENDING_COINS_WITHDRAW:FireServer(guid, {{
+                    vendingMachine = v,
+                    player_tracking_category = "join_from_web",
+                    amount = withdrawAmount,
+                }})
+                processed = processed + 1
+            end
+
+            VENDING_CLOSE:FireServer({vendingMachine = v})
+            active = active - 1
+        end)
+    end
+
+    while active > 0 do
+        if loopGen and loopGen ~= Config.State.CoinLoopGeneration then break end
+        task.wait(0.05)
+    end
+    Config.State.CoinActionInProgress = false
+end
+
+local function DepositItems(itemName, amount, showNotif, loopGen)
+    if showNotif == nil then showNotif = true end
+    if loopGen and loopGen ~= Config.State.ItemLoopGeneration then return 0 end
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return 0 end
+
+    local Backpack = LocalPlayer:WaitForChild("Backpack")
+    local tool = Backpack:FindFirstChild(itemName)
+    if not tool and LocalPlayer.Character then
+        tool = LocalPlayer.Character:FindFirstChild(itemName)
+    end
+    if not tool then return 0 end
+
+    local deposited = 0
+
+    local perCallAmount = nil
+    if amount and amount > 0 then
+        perCallAmount = amount
+    end
+    local desiredAmount = nil
+    if not perCallAmount then
+        local val = tool:FindFirstChild("Value")
+        desiredAmount = (val and val.Value) or 1
+    end
+
+    local queue = {}
+    local sortedVendings = GetVendings()
+
+    for _, v in ipairs(sortedVendings) do
+        if #queue >= Config.Settings.MaxVendingsPerCycle then break end
+
+            local contents = v:FindFirstChild("SellingContents")
+            local skip = false
+            local existingAmount = 0
+            if contents then
+                for _, it in ipairs(contents:GetChildren()) do
+                    local amt = it:FindFirstChild("Amount")
+                    if amt and amt.Value > 0 then
+                        if it.Name ~= itemName then
+                            skip = true
+                            break
+                        else
+                            existingAmount = existingAmount + (amt.Value or 0)
+                        end
+                    end
+                end
+            end
+            if skip then continue end
+
+            if perCallAmount == nil then
+                if existingAmount >= desiredAmount then continue end
+            end
+
+            local depositAmount = 0
+            if perCallAmount then
+                depositAmount = perCallAmount
+            else
+                depositAmount = desiredAmount
+                if existingAmount > 0 then
+                    depositAmount = math.max(0, desiredAmount - existingAmount)
+                end
+            end
+            if depositAmount <= 0 then continue end
+
+            local toolRef = Backpack:FindFirstChild(itemName)
+            if not toolRef and LocalPlayer.Character then
+                toolRef = LocalPlayer.Character:FindFirstChild(itemName)
+            end
+            if not toolRef then continue end
+
+            table.insert(queue, {v = v, depositAmount = depositAmount, existingAmount = existingAmount})
+    end
+
+    local active = 0
+    for _, entry in ipairs(queue) do
+        local vendingRef = entry.v
+        local depositAmount = entry.depositAmount
+        local existingAmount = entry.existingAmount
+
+        local guid = HttpService:GenerateGUID(false)
+        active = active + 1
+        task.spawn(function()
+            local toolRef = Backpack:FindFirstChild(itemName) or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(itemName))
+            if toolRef then
+                VENDING_OPEN:FireServer(guid, {{vendingMachine = vendingRef}})
+                VENDING_EDIT:FireServer(guid, {{vendingMachine = vendingRef}})
+                task.wait(0.001)
+                task.wait(0.001)
+
+                if not toolRef.Parent then
+                    toolRef = Backpack:FindFirstChild(itemName) or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(itemName))
+                end
+
+                if toolRef then
+                    VENDING_TRANS:FireServer(guid, {{
+                        player_tracking_category = "join_from_web",
+                        vendingMachine = vendingRef,
+                        action = "deposit",
+                        tool = toolRef,
+                        amount = depositAmount,
+                    }})
+                end
+                VENDING_CLOSE:FireServer({vendingMachine = vendingRef})
+            end
+            active = active - 1
+        end)
+    end
+
+    while active > 0 do
+        if loopGen and loopGen ~= Config.State.ItemLoopGeneration then break end
+        task.wait(0.05)
+    end
+
+    deposited = #queue
+    return deposited
+end
+
+local function DepositCoins(depositAmount, showNotif, singleTransaction, loopGen, parallel, maxConcurrent)
+    if showNotif == nil then showNotif = true end
+    if loopGen and loopGen ~= Config.State.CoinLoopGeneration then return end
+    if Config.State.CoinActionInProgress then return end
+    Config.State.CoinActionInProgress = true
+    local processed = 0
+    local maxvendingcapacity = 5_000_000_000
+    local queue = {}
+    local sortedVendings = GetVendings()
+    for _, v in ipairs(sortedVendings) do
+        if loopGen and loopGen ~= Config.State.CoinLoopGeneration then Config.State.CoinActionInProgress = false; return end
+        table.insert(queue, v)
+        if #queue >= Config.Settings.MaxVendingsPerCycle then break end
+    end
+    if #queue == 0 then Config.State.CoinActionInProgress = false; return end
+    local function processVending(v)
+        if loopGen and loopGen ~= Config.State.CoinLoopGeneration then return false end
+        local guid = HttpService:GenerateGUID(false)
+        VENDING_OPEN:FireServer(guid, {{vendingMachine = v}})
+        VENDING_EDIT:FireServer(guid, {{vendingMachine = v}})
+        task.wait(0.001)
+        task.wait(0.001)
+
+        local vendingCoinBalance = v:FindFirstChild("CoinBalance")
+        local currentBalance = vendingCoinBalance and vendingCoinBalance.Value or 0
+        local playerCoins = LocalPlayer:GetAttribute("Coins") or 0
+        if currentBalance >= maxvendingcapacity and vendingCoinBalance then
+            VENDING_CLOSE:FireServer({vendingMachine = v})
+            return false
+        end
+        if playerCoins <= 0 then
+            VENDING_CLOSE:FireServer({vendingMachine = v})
+            return false
+        end
+
+        local spaceAvailable = maxvendingcapacity - currentBalance
+        local amountToDeposit = 0
+        if depositAmount and depositAmount > 0 then
+            amountToDeposit = math.min(depositAmount, spaceAvailable, playerCoins)
+        else
+            amountToDeposit = math.min(playerCoins, spaceAvailable)
+        end
+        if amountToDeposit <= 0 then
+            VENDING_CLOSE:FireServer({vendingMachine = v})
+            return false
+        end
+
+        if loopGen and loopGen ~= Config.State.CoinLoopGeneration then
+            VENDING_CLOSE:FireServer({vendingMachine = v})
+            return false
+        end
+        VENDING_COINS_DEPOSIT:FireServer(guid, {{
+            vendingMachine = v,
+            player_tracking_category = "join_from_web",
+            amount = amountToDeposit,
+        }})
+        VENDING_CLOSE:FireServer({vendingMachine = v})
+        return true
+    end
+
+    if depositAmount and depositAmount > 0 then
+        local active = 0
+        for _, v in ipairs(queue) do
+            if loopGen and loopGen ~= Config.State.CoinLoopGeneration then break end
+            active = active + 1
+            task.spawn(function()
+                local ok = false
+                if singleTransaction then
+                    ok = processVending(v)
+                else
+                    local attempts = 0
+                    while attempts < 50 do
+                        attempts = attempts + 1
+                        if loopGen and loopGen ~= Config.State.CoinLoopGeneration then break end
+                        ok = processVending(v)
+                        if ok then break end
+                        task.wait(0.001)
+                    end
+                end
+                if ok then processed = processed + 1 end
+                active = active - 1
+            end)
+        end
+
+        while active > 0 do
+            if loopGen and loopGen ~= Config.State.CoinLoopGeneration then break end
+            task.wait(0.05)
+        end
+    elseif not parallel then
+        for _, v in ipairs(queue) do
+            if loopGen and loopGen ~= Config.State.CoinLoopGeneration then break end
+
+            local ok = false
+            if singleTransaction then
+                ok = processVending(v)
+            else
+                local attempts = 0
+                while attempts < 50 do
+                    attempts = attempts + 1
+                    if loopGen and loopGen ~= Config.State.CoinLoopGeneration then break end
+                    ok = processVending(v)
+                    if ok then break end
+                    task.wait(0.001)
+                end
+            end
+
+            if ok then processed = processed + 1 end
+            task.wait(Config.Delay.VendingAction)
+            if processed >= Config.Settings.MaxVendingsPerCycle then break end
+        end
+    else
+        maxConcurrent = math.max(1, maxConcurrent or 24)
+        maxConcurrent = math.min(maxConcurrent, #queue)
+        local idx = 1
+
+        local workers = {}
+        for w = 1, maxConcurrent do
+            workers[w] = task.spawn(function()
+                while true do
+                    if loopGen and loopGen ~= Config.State.CoinLoopGeneration then break end
+                    local i = idx
+                    idx = idx + 1
+                    if i > #queue then break end
+                    local v = queue[i]
+
+                    local ok = false
+                    if singleTransaction then
+                        ok = processVending(v)
+                    else
+                        local attempts = 0
+                        while attempts < 50 do
+                            attempts = attempts + 1
+                            if loopGen and loopGen ~= Config.State.CoinLoopGeneration then break end
+                            ok = processVending(v)
+                            if ok then break end
+                            task.wait(0.001)
+                        end
+                    end
+
+                    if ok then
+                        processed = processed + 1
+                    end
+
+                    task.wait(Config.Delay.VendingAction)
+                    if processed >= Config.Settings.MaxVendingsPerCycle then break end
+                end
+            end)
+        end
+
+        while true do
+            if loopGen and loopGen ~= Config.State.CoinLoopGeneration then break end
+            if idx > #queue then break end
+            task.wait(0.05)
+        end
+        task.wait(0.2)
+    end
+    Config.State.CoinActionInProgress = false
+end
+
+local function SetPrice(amount)
+    local processed = 0
+    local sortedVendings = GetVendings()
+    for _, v in ipairs(sortedVendings) do
+        if processed >= Config.Settings.MaxVendingsPerCycle then break end
+
+            local guid = HttpService:GenerateGUID(false)
+            VENDING_OPEN:FireServer(guid, {{vendingMachine = v}})
+            VENDING_EDIT:FireServer(guid, {{vendingMachine = v}})
+            task.wait(0.001)
+            task.wait(0.001)
+        
+            local finalPrice = amount
+            if not finalPrice then
+                finalPrice = v:GetAttribute("Price") or v:GetAttribute("TransactionPrice")
+                if not finalPrice then
+                    local pVal = v:FindFirstChild("Price") or v:FindFirstChild("TransactionPrice")
+                    if pVal then finalPrice = pVal.Value end
+                end
+            end
+
+            if finalPrice then
+                VENDING_MODE:FireServer(guid, {{
+                    mode = Config.State.SelectedVendMode,
+                    vendingMachine = v,
+                    player_tracking_category = "join_from_web",
+                    transactionPrice = finalPrice,
+                }})
+                processed = processed + 1
+            end
+        
+            VENDING_CLOSE:FireServer({vendingMachine = v})
+            task.wait(0.001)
+    end
+end
+
+local function DoAtm()
+    local amount = ParseNum(Config.State.ATMInputValue)
+    if not (amount and amount > 0) then return end
+
+    local transferType = (Config.State.AtmMode == "Withdraw" and "WITHDRAWAL") or "DEPOSIT"
+    
+    local guid = HttpService:GenerateGUID(false)
+    ATM_REMOTE:FireServer(guid, {{
+        accountType = "PERSONAL",
+        transferType = transferType,
+        amount = amount
+    }})
+end
+
+local function GetChests()
+    local list = {}
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return list end
+
+    local islands = Workspace:FindFirstChild("Islands")
+    if not islands then return list end
+
+    local radiusSq = Config.Settings.VendingRadius * Config.Settings.VendingRadius
+    local hrpPos = hrp.Position
+
+    local processedCount = 0
+    for _, island in ipairs(islands:GetChildren()) do
+        local blocks = island:FindFirstChild("Blocks")
+        if not blocks then continue end
+        for _, v in ipairs(blocks:GetChildren()) do
+            processedCount = processedCount + 1
+            if processedCount % 1000 == 0 then task.wait() end
+
+            local selectedInternal = Config.Cache.ChestMap[Config.State.SelectedChestType] or "All"
+            local isMatch = false
+            if selectedInternal == "All" then
+                for _, t in pairs(Config.Cache.ChestMap) do
+                    if t ~= "All" and v.Name == t then
+                        isMatch = true
+                        break
+                    end
+                end
+            elseif v.Name == selectedInternal then
+                isMatch = true
+            end
+            
+            if not isMatch then continue end
+
+            local part = v:FindFirstChildWhichIsA("BasePart") or v.PrimaryPart
+            if not part then continue end
+
+            local pPos = part.Position
+            local dx = pPos.X - hrpPos.X
+            local dy = pPos.Y - hrpPos.Y
+            local dz = pPos.Z - hrpPos.Z
+            local distSq = dx*dx + dy*dy + dz*dz
+
+            if distSq <= radiusSq then
+                table.insert(list, v)
+            end
+        end
+    end
+    return list
+end
+
+local function GetChestItems()
+    local items = {}
+    local seen = {}
+    local Backpack = LocalPlayer:WaitForChild("Backpack")
+    
+    for _, item in ipairs(Backpack:GetChildren()) do
+        if not seen[item.Name] then
+            local display = RegItem(item.Name, item)
+            table.insert(items, display)
+            seen[item.Name] = true
+        end
+    end
+    
+    local chests = GetChests()
+    for _, chest in ipairs(chests) do
+        local contents = chest:FindFirstChild("Contents")
+        if contents then
+            for _, item in ipairs(contents:GetChildren()) do
+                if not seen[item.Name] then
+                    local display = RegItem(item.Name, item)
+                    table.insert(items, display)
+                    seen[item.Name] = true
+                end
+            end
+        end
+    end
+    
+    table.sort(items)
+    return #items > 0 and items or {"Empty"}
+end
+
+local function DoChest(loopGen)
+    if loopGen and loopGen ~= Config.State.ChestLoopGeneration then return end
+
+    local chests = GetChests()
+    if #chests == 0 then return end
+
+    local amount = ParseNum(Config.State.ChestItemAmountValue) or 1
+
+    local tool = nil
+    if Config.State.UseHeldItemChest then
+        local char = LocalPlayer.Character
+        tool = char and char:FindFirstChildWhichIsA("Tool")
+    else
+        local Backpack = LocalPlayer:WaitForChild("Backpack")
+        tool = Backpack:FindFirstChild(Config.State.SelectedChestItem) or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(Config.State.SelectedChestItem))
+    end
+    
+    if not tool then return end
+    
+    local maxAmt = 1
+    local amtObj = tool:FindFirstChild("Amount")
+    if amtObj then maxAmt = amtObj.Value end
+    local depositAmt = amount
+    if depositAmt > maxAmt then depositAmt = maxAmt end
+    
+    if depositAmt <= 0 then return end
+
+    for _, chest in ipairs(chests) do
+        if loopGen and loopGen ~= Config.State.ChestLoopGeneration then break end
+        pcall(function()
+            CHEST_TRANS:InvokeServer({
+                chest = chest,
+                player_tracking_category = "join_from_web",
+                amount = depositAmt,
+                tool = tool,
+                action = "deposit"
+            })
+        end)
+        task.wait(0.05)
+    end
+end
+
+VendingTab:CreateSection("Scanner")
+VendingTab:CreateButton({
+    Name = "Scan Vending Machines",
+    Callback = function()
+        local islands = Workspace:FindFirstChild("Islands")
+        if not islands then
+            Window:Notify({Title = "Error", Content = "No Islands found"})
+            return
+        end
+        
+        task.spawn(function()
+            local count = 0
+            local totalCoins = 0
+            local totalItems = 0
+            local processed = 0
+            for _, island in ipairs(islands:GetChildren()) do
+                local blocks = island:FindFirstChild("Blocks")
+                if not blocks then continue end
+                for _, v in ipairs(blocks:GetChildren()) do
+                    processed = processed + 1
+                    if processed % 500 == 0 then task.wait() end
+                    if v.Name ~= "vendingMachine1" and v.Name ~= "vendingMachine" and v.Name ~= "vendingMachineIndustrial" then continue end
+                    local part = v:FindFirstChildWhichIsA("BasePart")
+                    if not part then continue end
+                    count = count + 1
+                    local coinBalance = v:FindFirstChild("CoinBalance")
+                    if coinBalance then
+                        totalCoins = totalCoins + coinBalance.Value
+                    end
+                    local contents = v:FindFirstChild("SellingContents")
+                    if contents then
+                        for _, item in ipairs(contents:GetChildren()) do
+                            local amt = item:FindFirstChild("Amount")
+                            if amt and amt.Value > 0 then
+                                totalItems = totalItems + amt.Value
+                            end
+                        end
+                    end
+                end
+            end
+            
+            Window:Notify({
+                Title = "Scan Complete",
+                Content = "Found " .. tostring(count) .. " machines\nItems: " .. ShortNum(totalItems) .. "\nTotal Coins: " .. ShortNum(totalCoins)
+            })
+        end)
+    end
+})
+
+VendingTab:CreateSection("Filters")
+VendingTab:CreateDropdown({
+    Name = "Target Machine Mode",
+    Options = {"All", "Sell", "Buy"},
+    CurrentOption = {"All"},
+    Callback = function(Option)
+        Config.State.TargetVendingMode = Option[1] or "All"
+    end
+})
+
+VendingTab:CreateSection("Item Selection")
+local ItemDropdown = nil
+VendingTab:CreateInput({
+    Name = "Search Item",
+    PlaceholderText = "Search...",
+    Callback = function(Text)
+        local allItems = GetInv()
+        local filtered = {}
+        local search = Text:lower()
+        for _, item in ipairs(allItems) do
+            if item:lower():find(search, 1, true) then
+                table.insert(filtered, item)
+            end
+        end
+        if #filtered == 0 then filtered = {"Empty"} end
+        if ItemDropdown then ItemDropdown:Refresh(filtered, filtered[1]) end
+    end
+})
+
+ItemDropdown = VendingTab:CreateDropdown({
+    Name = "Select Item",
+    Options = GetInv(),
+    CurrentOption = {"Empty"},
+    Callback = function(Option)
+        local display = Option[1] or "Empty"
+        Config.State.SelectedVendItem = Config.Cache.ItemNameMap[display] or display
+    end
+})
+
+VendingTab:CreateInput({
+    Name = "Item Amount",
+    PlaceholderText = "1-1000",
+    Callback = function(Text)
+        Config.State.ItemAmountValue = Text
+    end
+})
+
+VendingTab:CreateSection("Item Actions")
+VendingTab:CreateDropdown({
+    Name = "Select Item Mode",
+    Options = {"Deposit", "Withdraw", "Deposit (Max)", "Withdraw (Max)"},
+    CurrentOption = {"Deposit"},
+    Callback = function(Option)
+        Config.State.ItemMode = Option[1] or "Deposit"
+    end
+})
+
+VendingTab:CreateButton({
+    Name = "Perform Item Action (Radius)",
+    Callback = function()
+        if Config.State.ItemMode == "Deposit" then
+            local display = ItemDropdown.CurrentOption and ItemDropdown.CurrentOption[1] or "Empty"
+            local selectedItem = Config.Cache.ItemNameMap[display] or display
+            local amount = tonumber(Config.State.ItemAmountValue) or 1
+            if selectedItem ~= "Empty" then
+                DepositItems(selectedItem, amount)
+            end
+        elseif Config.State.ItemMode == "Deposit (Max)" then
+            local display = ItemDropdown.CurrentOption and ItemDropdown.CurrentOption[1] or "Empty"
+            local selectedItem = Config.Cache.ItemNameMap[display] or display
+            if selectedItem ~= "Empty" then
+                local Backpack = LocalPlayer:WaitForChild("Backpack")
+                local tool = Backpack:FindFirstChild(selectedItem)
+                if tool then
+                    DepositItems(selectedItem, 999999999)
+                end
+            end
+        elseif Config.State.ItemMode == "Withdraw" then
+            local amount = tonumber(Config.State.ItemAmountValue) or nil
+            WithdrawItems(false, amount, true, nil, nil)
+        elseif Config.State.ItemMode == "Withdraw (Max)" then
+            WithdrawItems(true, nil, true, nil, nil)
+        end
+    end
+})
+
+VendingTab:CreateDivider()
+
+local ItemThread = nil
+VendingTab:CreateToggle({
+    Name = "Loop Item Action",
+    CurrentValue = false,
+    Callback = function(Value)
+        Config.State.LoopItemEnabled = Value
+        if Value then
+            Config.State.ItemLoopGeneration = Config.State.ItemLoopGeneration + 1
+            local myGen = Config.State.ItemLoopGeneration
+            ItemThread = task.spawn(function()
+                while Config.State.LoopItemEnabled do
+                    if Config.State.ItemMode == "Deposit" then
+                        local display = ItemDropdown.CurrentOption and ItemDropdown.CurrentOption[1] or "Empty"
+                        local selectedItem = Config.Cache.ItemNameMap[display] or display
+                        local amount = tonumber(Config.State.ItemAmountValue) or 1
+                        if selectedItem ~= "Empty" then
+                            DepositItems(selectedItem, amount, false, myGen)
+                        end
+                    elseif Config.State.ItemMode == "Deposit (Max)" then
+                        local display = ItemDropdown.CurrentOption and ItemDropdown.CurrentOption[1] or "Empty"
+                        local selectedItem = Config.Cache.ItemNameMap[display] or display
+                        if selectedItem ~= "Empty" then
+                            local Backpack = LocalPlayer:WaitForChild("Backpack")
+                            local tool = Backpack:FindFirstChild(selectedItem)
+                            if tool then
+                                local amount = tool:FindFirstChild("Value")
+                                if amount then
+                                    DepositItems(selectedItem, amount.Value, false, myGen)
+                                else
+                                    DepositItems(selectedItem, 999999999, false, myGen)
+                                end
+                            end
+                        end
+                    elseif Config.State.ItemMode == "Withdraw" then
+                        local amount = tonumber(Config.State.ItemAmountValue) or nil
+                        WithdrawItems(false, amount, false, myGen, nil)
+                    elseif Config.State.ItemMode == "Withdraw (Max)" then
+                        WithdrawItems(true, nil, false, myGen, nil)
+                    end
+                    if Config.State.LoopItemEnabled then
+                        task.wait(Config.Delay.WithdrawLoop)
+                    end
+                end
+            end)
+            AddLoop(ItemThread)
+        else
+            Config.State.LoopItemEnabled = false
+            if ItemThread then
+                task.cancel(ItemThread)
+                ItemThread = nil
+            end
+        end
+    end
+})
+
+VendingTab:CreateSlider({
+    Name = "Item Loop Delay",
+    Range = {0.3, 25},
+    Increment = 0.1,
+    Suffix = "s",
+    CurrentValue = Config.Delay.WithdrawLoop,
+    Callback = function(Value)
+        Config.Delay.WithdrawLoop = Value
+    end
+})
+
+VendingTab:CreateSection("Price & Mode Management")
+VendingTab:CreateDropdown({
+    Name = "Vending Mode",
+    Options = {"Sell", "Buy"},
+    CurrentOption = {"Sell"},
+    Callback = function(Option)
+        local mode = Option[1] or "Sell"
+        if mode == "Sell" then
+            Config.State.SelectedVendMode = 0
+        elseif mode == "Buy" then
+            Config.State.SelectedVendMode = 1
+        end
+    end
+})
+
+VendingTab:CreateInput({
+    Name = "Price",
+    PlaceholderText = "e.g. 1B",
+    Callback = function(Text)
+        Config.State.PriceInputValue = Text
+    end
+})
+
+VendingTab:CreateButton({
+    Name = "Set Price/Mode (Radius)",
+    Callback = function()
+        local amount = ParseNum(Config.State.PriceInputValue)
+        SetPrice(amount)
+    end
+})
+
+VendingTab:CreateSection("Coin Management")
+VendingTab:CreateInput({
+    Name = "Coin Amount",
+    PlaceholderText = "e.g. 1B",
+    Callback = function(Text)
+        Config.State.CoinInputValue = Text
+    end
+})
+
+VendingTab:CreateDropdown({
+    Name = "Select Coin Mode",
+    Options = {"Deposit", "Withdraw", "Deposit (Max)", "Withdraw (Max)"},
+    CurrentOption = {"Deposit"},
+    Callback = function(Option)
+        Config.State.CoinMode = Option[1] or "Deposit"
+    end
+})
+
+VendingTab:CreateButton({
+    Name = "Perform Coin Action",
+    Callback = function()
+        if Config.State.CoinMode == "Deposit" then
+            if Config.State.CoinInputValue == "" or Config.State.CoinInputValue == nil then return end
+            local amount = ParseNum(Config.State.CoinInputValue)
+            if not amount or amount <= 0 then return end
+            DepositCoins(amount, true, true)
+        elseif Config.State.CoinMode == "Deposit (Max)" then
+            DepositCoins(LocalPlayer:GetAttribute("Coins") or 0, true, true)
+        elseif Config.State.CoinMode == "Withdraw" then
+            if Config.State.CoinInputValue == "" or Config.State.CoinInputValue == nil then return end
+            local amount = ParseNum(Config.State.CoinInputValue)
+            if not amount or amount <= 0 then return end
+            WithdrawCoins(amount, true, true)
+        elseif Config.State.CoinMode == "Withdraw (Max)" then
+            WithdrawCoins(nil, true, true)
+        end
+    end
+})
+
+VendingTab:CreateDivider()
+
+local CoinThread = nil
+VendingTab:CreateToggle({
+    Name = "Loop Coin Action",
+    CurrentValue = false,
+    Callback = function(Value)
+        Config.State.LoopCoinEnabled = Value
+        if Value then
+            Config.State.CoinLoopGeneration = Config.State.CoinLoopGeneration + 1
+            local myGen = Config.State.CoinLoopGeneration
+            CoinThread = task.spawn(function()
+                while Config.State.LoopCoinEnabled do
+                    if Config.State.CoinMode == "Deposit" then
+                        if Config.State.CoinInputValue ~= "" and Config.State.CoinInputValue ~= nil then
+                            local amount = ParseNum(Config.State.CoinInputValue)
+                            if amount and amount > 0 then
+                                task.spawn(function() DepositCoins(amount, false, true, myGen) end)
+                            end
+                        end
+                    elseif Config.State.CoinMode == "Deposit (Max)" then
+                        local maxCoins = LocalPlayer:GetAttribute("Coins") or 0
+                        if maxCoins > 0 then
+                            task.spawn(function() DepositCoins(maxCoins, false, true, myGen) end)
+                        end
+                    elseif Config.State.CoinMode == "Withdraw" then
+                        if Config.State.CoinInputValue ~= "" and Config.State.CoinInputValue ~= nil then
+                            local amount = ParseNum(Config.State.CoinInputValue)
+                            if amount and amount > 0 then
+                                task.spawn(function() WithdrawCoins(amount, false, false, myGen) end)
+                            end
+                        end
+                    elseif Config.State.CoinMode == "Withdraw (Max)" then
+                        task.spawn(function() WithdrawCoins(nil, false, false, myGen) end)
+                    end
+                    if Config.State.LoopCoinEnabled then
+                        task.wait(Config.Delay.CoinLoop)
+                    end
+                end
+            end)
+            AddLoop(CoinThread)
+        else
+            Config.State.LoopCoinEnabled = false
+            if CoinThread then
+                task.cancel(CoinThread)
+                CoinThread = nil
+            end
+        end
+    end
+})
+
+VendingTab:CreateSlider({
+    Name = "Coin Loop Delay",
+    Range = {0.1, 25},
+    Increment = 0.1,
+    Suffix = "s",
+    CurrentValue = Config.Delay.CoinLoop,
+    Callback = function(Value)
+        Config.Delay.CoinLoop = Value
+    end
+})
+
+ChestTab:CreateSection("Scanner")
+ChestTab:CreateButton({
+    Name = "Scan Chests",
+    Callback = function()
+        local islands = Workspace:FindFirstChild("Islands")
+        if not islands then return end
+        
+        task.spawn(function()
+            local count = 0
+            local totalItems = 0
+            local processed = 0
+            
+            for _, island in ipairs(islands:GetChildren()) do
+                local blocks = island:FindFirstChild("Blocks")
+                if not blocks then continue end
+                for _, v in ipairs(blocks:GetChildren()) do
+                    processed = processed + 1
+                    if processed % 500 == 0 then task.wait() end
+                    
+                    local selectedInternal = Config.Cache.ChestMap[Config.State.SelectedChestType] or "All"
+                    local isMatch = false
+                    if selectedInternal == "All" then
+                        for _, t in pairs(Config.Cache.ChestMap) do
+                            if t ~= "All" and v.Name == t then
+                                isMatch = true
+                                break
+                            end
+                        end
+                    elseif v.Name == selectedInternal then
+                        isMatch = true
+                    end
+                    
+                    if not isMatch then continue end
+                    
+                    count = count + 1
+                    local contents = v:FindFirstChild("Contents")
+                    if contents then
+                        for _, item in ipairs(contents:GetChildren()) do
+                            local amt = item:FindFirstChild("Amount")
+                            if amt then
+                                totalItems = totalItems + amt.Value
+                            end
+                        end
+                    end
+                end
+            end
+            
+            Window:Notify({
+                Title = "Chest Scan",
+                Content = "Found " .. count .. " chests\nItems: " .. ShortNum(totalItems)
+            })
+        end)
+    end
+})
+
+ChestTab:CreateSection("Item Selection")
+local ChestItemDropdown = nil
+ChestTab:CreateInput({
+    Name = "Search Item",
+    PlaceholderText = "Search...",
+    Callback = function(Text)
+        local allItems = GetChestItems()
+        local filtered = {}
+        local search = Text:lower()
+        for _, item in ipairs(allItems) do
+            if item:lower():find(search, 1, true) then
+                table.insert(filtered, item)
+            end
+        end
+        if #filtered == 0 then filtered = {"Empty"} end
+        if ChestItemDropdown then ChestItemDropdown:Refresh(filtered, filtered[1]) end
+    end
+})
+
+ChestItemDropdown = ChestTab:CreateDropdown({
+    Name = "Select Item",
+    Options = GetChestItems(),
+    CurrentOption = {"Empty"},
+    Callback = function(Option)
+        local display = Option[1]
+        Config.State.SelectedChestItem = Config.Cache.ItemNameMap[display] or display
+    end
+})
+
+ChestTab:CreateToggle({
+    Name = "Use Held Item",
+    CurrentValue = false,
+    Callback = function(Value)
+        Config.State.UseHeldItemChest = Value
+    end
+})
+
+ChestTab:CreateInput({
+    Name = "Item Amount",
+    PlaceholderText = "Amount (e.g. 1k)",
+    Callback = function(Text)
+        Config.State.ChestItemAmountValue = Text
+    end
+})
+
+ChestTab:CreateSection("Chest Actions")
+local ChestTypes = {
+    "All", "Expanded Diamond Chest", "Diamond Chest", "Industrial Medium Chest",
+    "Medium Chest", "Industrial Medium Chest (IO)", "Timed Industrial Chest",
+    "Large Chest", "Industrial Large Chest", "Industrial Large Chest (IO)", "Small Chest"
+}
+
+ChestTab:CreateDropdown({
+    Name = "Chest Type",
+    Options = ChestTypes,
+    CurrentOption = {"All"},
+    Callback = function(Option)
+        Config.State.SelectedChestType = Option[1]
+    end
+})
+
+ChestTab:CreateButton({
+    Name = "Deposit (Radius)",
+    Callback = function()
+        DoChest()
+    end
+})
+
+ChestTab:CreateDivider()
+
+local ChestThread = nil
+ChestTab:CreateToggle({
+    Name = "Loop Deposit",
+    CurrentValue = false,
+    Callback = function(Value)
+        Config.State.ChestLoopEnabled = Value
+        if Value then
+            Config.State.ChestLoopGeneration = Config.State.ChestLoopGeneration + 1
+            local myGen = Config.State.ChestLoopGeneration
+            ChestThread = task.spawn(function()
+                while Config.State.ChestLoopEnabled and myGen == Config.State.ChestLoopGeneration do
+                    DoChest(myGen)
+                    task.wait(Config.Delay.ChestLoop)
+                end
+            end)
+            AddLoop(ChestThread)
+        else
+            if ChestThread then
+                task.cancel(ChestThread)
+                ChestThread = nil
+            end
+        end
+    end
+})
+
+ChestTab:CreateSlider({
+    Name = "Chest Loop Delay",
+    Range = {0.1, 10},
+    Increment = 0.1,
+    Suffix = "s",
+    CurrentValue = Config.Delay.ChestLoop,
+    Callback = function(Value)
+        Config.Delay.ChestLoop = Value
+    end
+})
+
+ATMTab:CreateSection("ATM Operations")
+ATMTab:CreateInput({
+    Name = "Amount",
+    PlaceholderText = "e.g. 1B",
+    Callback = function(Text)
+        Config.State.ATMInputValue = Text
+    end
+})
+
+ATMTab:CreateDropdown({
+    Name = "Select ATM Mode",
+    Options = {"Deposit", "Withdraw"},
+    CurrentOption = {"Deposit"},
+    Callback = function(Option)
+        Config.State.AtmMode = Option[1] or "Deposit"
+    end
+})
+
+ATMTab:CreateButton({
+    Name = "Perform ATM Action",
+    Callback = DoAtm
+})
+
+ATMTab:CreateDivider()
+
+local AtmThread = nil
+ATMTab:CreateToggle({
+    Name = "Loop ATM Action",
+    CurrentValue = false,
+    Callback = function(Value)
+        Config.State.AtmLoopEnabled = Value
+        if Value then
+            Config.State.AtmLoopGeneration = Config.State.AtmLoopGeneration + 1
+            local myGen = Config.State.AtmLoopGeneration
+            AtmThread = task.spawn(function()
+                while Config.State.AtmLoopEnabled and myGen == Config.State.AtmLoopGeneration do
+                    DoAtm()
+                    task.wait(Config.Delay.AtmLoop)
+                end
+            end)
+            AddLoop(AtmThread)
+        else
+            Config.State.AtmLoopEnabled = false
+            if AtmThread then
+                task.cancel(AtmThread)
+                AtmThread = nil
+            end
+        end
+    end
+})
+
+ATMTab:CreateSlider({
+    Name = "ATM Loop Delay",
+    Range = {0.1, 10},
+    Increment = 0.1,
+    Suffix = "s",
+    CurrentValue = Config.Delay.AtmLoop,
+    Callback = function(Value)
+        Config.Delay.AtmLoop = Value
+    end
+})
+
+OpeningTab:CreateSection("Present Opening")
+OpeningTab:CreateToggle({
+    Name = "Auto Open Presents",
+    CurrentValue = false,
+    Callback = function(Value)
+        Config.State.OpeningEnabled = Value
+    end
+})
+
+OpeningTab:CreateSlider({
+    Name = "Opening Speed",
+    Range = {0.05, 2},
+    Increment = 0.01,
+    Suffix = "s",
+    CurrentValue = Config.Delay.OpeningSpeed,
+    Callback = function(Value)
+        Config.Delay.OpeningSpeed = Value
+    end
+})
+
+OpeningTab:CreateSection("Chest/Cauldron Opener")
+local OpenerTypes = {"All", "Cauldron", "Treasure Chest", "Dungeon Chest", "Serpent Egg", "Dragon Egg"}
+local OpenThread = nil
+
+OpeningTab:CreateDropdown({
+    Name = "Openable Type",
+    Options = OpenerTypes,
+    CurrentOption = {"All"},
+    Callback = function(Option)
+        Config.State.SelectedOpenerType = Option[1]
+    end
+})
+
+OpeningTab:CreateToggle({
+    Name = "Auto Open",
+    CurrentValue = false,
+    Callback = function(Value)
+        Config.State.ChestOpenerEnabled = Value
+        if Value then
+            OpenThread = task.spawn(function()
+                while Config.State.ChestOpenerEnabled do
+                    local foundTarget = false
+                    pcall(function()
+                        local char = LocalPlayer.Character
+                        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            local bestTarget = nil
+                            local bestDist = math.huge
+                            
+                            local islands = Workspace:FindFirstChild("Islands")
+                            if islands then
+                                for _, island in ipairs(islands:GetChildren()) do
+                                    local blocks = island:FindFirstChild("Blocks")
+                                    if blocks then
+                                        for _, v in ipairs(blocks:GetChildren()) do
+                                            local name = v.Name
+                                            local isMatch = false
+                                            if Config.State.SelectedOpenerType == "All" then
+                                                if name:find("cauldron") or name:find("treasureChest") or name:find("dungeonChest") or name:find("serpentEgg") or name:find("dragonEgg") then
+                                                    isMatch = true
+                                                end
+                                            elseif Config.State.SelectedOpenerType == "Cauldron" and name:find("cauldron") then
+                                                isMatch = true
+                                            elseif Config.State.SelectedOpenerType == "Treasure Chest" and name:find("treasureChest") then
+                                                isMatch = true
+                                            elseif Config.State.SelectedOpenerType == "Dungeon Chest" and name:find("dungeonChest") then
+                                                isMatch = true
+                                            elseif Config.State.SelectedOpenerType == "Serpent Egg" and name:find("serpentEgg") then
+                                                isMatch = true
+                                            elseif Config.State.SelectedOpenerType == "Dragon Egg" and name:find("dragonEgg") then
+                                                isMatch = true
+                                            end
+                                            
+                                            if isMatch then
+                                                local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
+                                                if prompt and prompt.Enabled then
+                                                    local part = prompt.Parent
+                                                    if part and part:IsA("Attachment") then part = part.Parent end
+                                                    if part and part:IsA("Model") then
+                                                        part = part.PrimaryPart or part:FindFirstChildWhichIsA("BasePart", true)
+                                                    end
+                                                    
+                                                    if part and part:IsA("BasePart") then
+                                                        local dist = (part.Position - hrp.Position).Magnitude
+                                                        if dist < bestDist then
+                                                            bestDist = dist
+                                                            bestTarget = {prompt = prompt, part = part}
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                            
+                            if bestTarget then
+                                foundTarget = true
+                                if Config.State.ChestWalkEnabled then
+                                    local hum = char:FindFirstChild("Humanoid")
+                                    if hum then
+                                        if hum.Sit then hum.Sit = false end
+                                        hum:MoveTo(bestTarget.part.Position)
+                                        
+                                        local targetPos = bestTarget.part.Position
+                                        local myPos = hrp.Position
+                                        local dir = (targetPos - myPos) * Vector3.new(1, 0, 1)
+                                        
+                                        if dir.Magnitude > 1 then
+                                            dir = dir.Unit
+                                            local params = RaycastParams.new()
+                                            local filter = {char, bestTarget.part}
+                                            local targetModel = bestTarget.part:FindFirstAncestorOfClass("Model")
+                                            if targetModel then table.insert(filter, targetModel) end
+                                            params.FilterDescendantsInstances = filter
+                                            params.FilterType = Enum.RaycastFilterType.Exclude
+                                            local result = Workspace:Raycast(myPos, dir * 4, params)
+                                            if result and result.Instance and result.Instance.CanCollide then
+                                                hum.Jump = true
+                                            end
+                                        end
+                                    end
+                                end
+                                
+                                local dist = (bestTarget.part.Position - hrp.Position).Magnitude
+                                if dist <= bestTarget.prompt.MaxActivationDistance + 2 then
+                                    if fireproximityprompt then
+                                        fireproximityprompt(bestTarget.prompt)
+                                    else
+                                        local oldHold = bestTarget.prompt.HoldDuration
+                                        bestTarget.prompt.HoldDuration = 0
+                                        bestTarget.prompt:InputHoldBegin()
+                                        task.wait()
+                                        bestTarget.prompt:InputHoldEnd()
+                                        bestTarget.prompt.HoldDuration = oldHold
+                                    end
+                                end
+                            end
+                        end
+                    end)
+                    task.wait(0.1)
+                end
+            end)
+            AddLoop(OpenThread)
+        else
+            if OpenThread then
+                task.cancel(OpenThread)
+                OpenThread = nil
+            end
+        end
+    end
+})
+
+OpeningTab:CreateToggle({
+    Name = "Walk to Openable",
+    CurrentValue = false,
+    Callback = function(Value)
+        Config.State.ChestWalkEnabled = Value
+    end
+})
+
+CombatTab:CreateSection("Mob Selection")
+
+local MobMap = {}
+local AllMobNames = {}
+
+local AllMobs = {
+    "slime", "desertBandit", "crab", "buffalkor",
+    "rockMimic", "wizardLizard",
+    "skorp", "magmaBlob", "magmaGolem", "voidDog"
+}
+
+local DisplayNameOverrides = {
+    ["slime"] = "Slime",
+    ["desertBandit"] = "Bandit",
+    ["crab"] = "Angry Crab",
+    ["rockMimic"] = "Rock Mimic",
+    ["wizardLizard"] = "Wizard Lizard",
+    ["skorp"] = "Skorp",
+    ["magmaBlob"] = "Magma Blob",
+    ["magmaGolem"] = "Magma Golem",
+    ["voidDog"] = "Void Hound"
+}
+
+for _, mob in ipairs(AllMobs) do
+    local display = DisplayNameOverrides[mob] or FixName(mob)
+    table.insert(AllMobNames, display)
+    MobMap[display] = mob
+end
+table.sort(AllMobNames)
+
+CombatTab:CreateDropdown({
+    Name = "Select Mob",
+    Options = AllMobNames,
+    CurrentOption = {"Slime"},
+    Callback = function(Option)
+        local display = Option[1]
+        if display then
+            Config.State.SelectedMob = MobMap[display]
+        end
+    end
+})
+
+CombatTab:CreateSection("Automation")
+
+local CombatThread = nil
+CombatTab:CreateToggle({
+    Name = "Auto Farm",
+    CurrentValue = false,
+    Callback = function(Value)
+        Config.State.AutoFarmEnabled = Value
+        if Value then
+            Config.Cache.NoclipConnection = RunService.Stepped:Connect(function()
+                if LocalPlayer.Character then
+                    for _, v in ipairs(LocalPlayer.Character:GetDescendants()) do
+                        if v:IsA("BasePart") and v.CanCollide then
+                            v.CanCollide = false
+                        end
+                    end
+                end
+            end)
+            CombatThread = task.spawn(function()
+                local lastAttack = 0
+                local Remote = game:GetService("ReplicatedStorage"):WaitForChild("rbxts_include"):WaitForChild("node_modules"):WaitForChild("@rbxts"):WaitForChild("net"):WaitForChild("out"):WaitForChild("_NetManaged"):WaitForChild("fLafXsVXagmlXhlc/UlpaomJfNzwc")
+                
+                local WeaponPriority = {"reaperScythe", "cursedHammer", "divineDao", "captainsRapier", "iceHammer"}
+                local WeaponAnims = {
+                    reaperScythe = {"rbxassetid://5328169716", "rbxassetid://5328168543"},
+                    cursedHammer = {"rbxassetid://5065710449", "rbxassetid://5085834028"},
+                    divineDao = {"rbxassetid://5328169716", "rbxassetid://5328168543"},
+                    captainsRapier = {"rbxassetid://5328169716", "rbxassetid://5328168543"},
+                    iceHammer = {"rbxassetid://5065710449", "rbxassetid://5085834028"}
+                }
+                local DefaultAnims = {"rbxassetid://5065710449", "rbxassetid://5085834028"}
+
+                local HitAnim1, HitAnim2
+                local CurrentAnimIds = {nil, nil}
+
+                local function LoadAnims(id1, id2)
+                    if CurrentAnimIds[1] == id1 and CurrentAnimIds[2] == id2 and HitAnim1 and HitAnim2 then return end
+                    local char = LocalPlayer.Character
+                    local hum = char and char:FindFirstChild("Humanoid")
+                    if hum then
+                        if HitAnim1 then HitAnim1:Stop(); HitAnim1:Destroy() end
+                        if HitAnim2 then HitAnim2:Stop(); HitAnim2:Destroy() end
+                        
+                        local a1 = Instance.new("Animation")
+                        a1.AnimationId = id1
+                        HitAnim1 = hum:LoadAnimation(a1)
+                        local a2 = Instance.new("Animation")
+                        a2.AnimationId = id2
+                        HitAnim2 = hum:LoadAnimation(a2)
+                        CurrentAnimIds = {id1, id2}
+                    end
+                end
+
+                while Config.State.AutoFarmEnabled do
+                    local char = LocalPlayer.Character
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    if hrp and Config.State.SelectedMob then
+                        local backpack = LocalPlayer:FindFirstChild("Backpack")
+                        local equippedTool = char:FindFirstChildWhichIsA("Tool")
+                        local bestWeaponName = nil
+                        
+                        for _, name in ipairs(WeaponPriority) do
+                            if (char and char:FindFirstChild(name)) or (backpack and backpack:FindFirstChild(name)) then
+                                bestWeaponName = name
+                                break
+                            end
+                        end
+
+                        if bestWeaponName then
+                            if not equippedTool or equippedTool.Name ~= bestWeaponName then
+                                local tool = backpack and backpack:FindFirstChild(bestWeaponName)
+                                if tool and char then
+                                    local hum = char:FindFirstChild("Humanoid")
+                                    if hum then hum:EquipTool(tool) end
+                                end
+                            end
+                        end
+                        
+                        local currentAnims = (bestWeaponName and WeaponAnims[bestWeaponName]) or DefaultAnims
+
+                        local bv = hrp:FindFirstChild("FarmBV")
+                        if not bv then
+                            bv = Instance.new("BodyVelocity")
+                            bv.Name = "FarmBV"
+                            bv.Velocity = Vector3.zero
+                            bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+                            bv.Parent = hrp
+                        end
+
+                        local target = nil
+                        local minDist = math.huge
+                        
+                        local entities = Workspace:FindFirstChild("WildernessIsland") and Workspace.WildernessIsland:FindFirstChild("Entities")
+                        if not entities then entities = Workspace:FindFirstChild("Entities") end
+                        
+                        if entities then
+                            for _, v in ipairs(entities:GetChildren()) do
+                                if v:FindFirstChild("HumanoidRootPart") and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 then
+                                    if v.Name:lower():find(Config.State.SelectedMob:lower()) then
+                                        local dist = (v.HumanoidRootPart.Position - hrp.Position).Magnitude
+                                        if dist < minDist then
+                                            minDist = dist
+                                            target = v
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        
+                        if target then
+                            local targetPart = target.HumanoidRootPart
+                            if targetPart then
+                                local targetPos = targetPart.Position + Vector3.new(0, -11, 0)
+                                local dist = (targetPos - hrp.Position).Magnitude
+                                local speed = Config.Delay.TweenSpeed or 25
+                                
+                                local info = TweenInfo.new(math.max(dist / speed, 0.05), Enum.EasingStyle.Linear)
+                                local tween = TweenService:Create(hrp, info, {CFrame = CFrame.new(targetPos)})
+                                Config.Cache.CurrentFarmTween = tween
+                                tween:Play()
+                                
+                                if tick() - lastAttack > 0.6 then
+                                    lastAttack = tick()
+                                    task.spawn(function()
+                                        pcall(function()
+                                            LoadAnims(currentAnims[1], currentAnims[2])
+                                            if HitAnim1 then HitAnim1:Play() end
+                                            if HitAnim2 then HitAnim2:Play() end
+                                            
+                                            local args = {
+                                                "6164F31F-7600-48E7-866C-7229FEA1FDE1",
+                                                {
+                                                    {
+                                                        hitUnit = target,
+                                                        IucpoZdgwp = "\a\240\159\164\163\240\159\164\161\a\n\a\n\a\nefmmgivC"
+                                                    }
+                                                }
+                                            }
+                                            Remote:FireServer(unpack(args))
+                                        end)
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                    task.wait()
+                end
+                local char = LocalPlayer.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local bv = hrp:FindFirstChild("FarmBV")
+                    if bv then bv:Destroy() end
+                end
+            end)
+            AddLoop(CombatThread)
+        else
+            if Config.Cache.NoclipConnection then
+                Config.Cache.NoclipConnection:Disconnect()
+                Config.Cache.NoclipConnection = nil
+            end
+            if CombatThread then
+                task.cancel(CombatThread)
+                CombatThread = nil
+            end
+            if Config.Cache.CurrentFarmTween then
+                Config.Cache.CurrentFarmTween:Cancel()
+                Config.Cache.CurrentFarmTween = nil
+            end
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local bv = hrp:FindFirstChild("FarmBV")
+                if bv then bv:Destroy() end
+            end
+        end
+    end
+})
+
+CombatTab:CreateSlider({
+    Name = "Tween Speed",
+    Range = {1, 30},
+    Increment = 1,
+    Suffix = " spd",
+    CurrentValue = Config.Delay.TweenSpeed,
+    Callback = function(Value)
+        Config.Delay.TweenSpeed = Value
+    end
+})
+
+MiscTab:CreateSection("Modules")
+
+local ViewInvTarget = ""
+MiscTab:CreateInput({
+    Name = "Target Username",
+    PlaceholderText = "Username (empty = local)",
+    Callback = function(Text)
+        ViewInvTarget = Text
+    end
+})
+
+MiscTab:CreateButton({
+    Name = "View Inventory (Native UI)",
+    Callback = function()
+        local success, err = pcall(function()
+            local RoactModule = ReplicatedStorage:WaitForChild("rbxts_include"):WaitForChild("node_modules"):WaitForChild("@rbxts"):WaitForChild("roact"):WaitForChild("src")
+            local Roact = require(RoactModule)
+            
+            local PlayerScripts = LocalPlayer:WaitForChild("PlayerScripts")
+            local function GetModule(pathTable)
+                local current = PlayerScripts
+                for _, name in ipairs(pathTable) do
+                    current = current:WaitForChild(name, 5)
+                    if not current then return nil end
+                end
+                return current
+            end
+            
+            local PeekWrapperModule = GetModule({"TS", "flame", "controllers", "moderation", "ui", "inventory-peek-wrapper"})
+            if not PeekWrapperModule then
+                Window:Notify({Title = "Error", Content = "InventoryPeekWrapper not found"})
+                return
+            end
+            
+            local InventoryPeekWrapper = require(PeekWrapperModule).InventoryPeekWrapper
+            
+            local targetPlayer = LocalPlayer
+            if ViewInvTarget ~= "" then
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if string.find(string.lower(p.Name), string.lower(ViewInvTarget)) or string.find(string.lower(p.DisplayName), string.lower(ViewInvTarget)) then
+                        targetPlayer = p
+                        break
+                    end
+                end
+            end
+            
+            local realTools = {}
+            local backpack = targetPlayer:FindFirstChild("Backpack")
+            if backpack then
+                for _, tool in ipairs(backpack:GetChildren()) do
+                    local amount = 1
+                    local amtObj = tool:FindFirstChild("Amount") or tool:FindFirstChild("Value")
+                    if amtObj and (amtObj:IsA("IntValue") or amtObj:IsA("NumberValue")) then
+                        amount = amtObj.Value
+                    end
+                    table.insert(realTools, { name = tool.Name, amount = amount, displayName = tool.Name })
+                end
+            end
+
+            if targetPlayer.Character then
+                local equipped = targetPlayer.Character:FindFirstChildWhichIsA("Tool")
+                if equipped then
+                     local amount = 1
+                    local amtObj = equipped:FindFirstChild("Amount") or equipped:FindFirstChild("Value")
+                    if amtObj and (amtObj:IsA("IntValue") or amtObj:IsA("NumberValue")) then
+                        amount = amtObj.Value
+                    end
+                    table.insert(realTools, { name = equipped.Name, amount = amount, displayName = equipped.Name })
+                end
+            end
+
+            if #realTools == 0 then
+                table.insert(realTools, { name = "barrier", amount = 0, displayName = "No Items Found (Not Replicated)" })
+            end
+
+            if Config.Cache.MountedInventoryView then
+                Roact.unmount(Config.Cache.MountedInventoryView)
+                Config.Cache.MountedInventoryView = nil
+            end
+
+            local app = Roact.createElement("ScreenGui", {
+                DisplayOrder = 10000,
+                IgnoreGuiInset = true,
+                ResetOnSpawn = false
+            }, {
+                Roact.createElement(InventoryPeekWrapper, {
+                    headerText = targetPlayer.Name,
+                    tools = realTools,
+                    onClose = function()
+                        if Config.Cache.MountedInventoryView then
+                            Roact.unmount(Config.Cache.MountedInventoryView)
+                            Config.Cache.MountedInventoryView = nil
+                        end
+                    end
+                })
+            })
+            
+            Config.Cache.MountedInventoryView = Roact.mount(app, LocalPlayer:WaitForChild("PlayerGui"))
+        end)
+        
+        if not success then
+            Window:Notify({Title = "Error", Content = "Failed: " .. tostring(err)})
+        end
+    end
+})
+
+MiscTab:CreateDivider()
+
+if IsExecComp then
+MiscTab:CreateToggle({
+    Name = "Sickle Range Bypass",
+    CurrentValue = false,
+    Callback = function(Value)
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local TS = ReplicatedStorage:WaitForChild("TS", 5)
+        if not TS then 
+            Window:Notify({Title = "Error", Content = "TS folder not found"})
+            return 
+        end
+
+        local SickleUtilsModule = TS:WaitForChild("tool"):WaitForChild("tools"):WaitForChild("tool-utils"):WaitForChild("sickle-utils")
+        local success, SickleUtils = pcall(require, SickleUtilsModule)
+        if not success then
+            Window:Notify({Title = "Error", Content = "Failed to load SickleUtils"})
+            return
+        end
+
+        if not OldSickle then
+            OldSickle = SickleUtils.SickleUtils.getNearbyBlocks
+        end
+
+        if Value then
+            local BlockMetaModule = TS:WaitForChild("block"):WaitForChild("block-meta")
+            local ArrayUtilModule = TS:WaitForChild("util"):WaitForChild("array-utils")
+            local BlockUtilsModule = TS:WaitForChild("util"):WaitForChild("block-utils")
+
+            local s1, BlockMeta = pcall(function() return require(BlockMetaModule).BlockMeta end)
+            local s2, ArrayUtil = pcall(function() return require(ArrayUtilModule).ArrayUtil end)
+            local s3, BlockUtils = pcall(function() return require(BlockUtilsModule).BlockUtils end)
+
+            if not (s1 and s2 and s3) then
+                Window:Notify({Title = "Error", Content = "Failed to load Sickle dependencies"})
+                return
+            end
+
+            local overrideradius = 25
+            local overridelimit = 100
+
+            SickleUtils.SickleUtils.getNearbyBlocks = function(position, config)
+                local regionSize = Vector3.new(overrideradius * 2, overrideradius * 2, overrideradius * 2)
+                local cframe = CFrame.new(position)
+                local overlapParams = OverlapParams.new()
+                overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+                
+                local player = game:GetService("Players").LocalPlayer
+                if player and player.Character then
+                    overlapParams.FilterDescendantsInstances = {player.Character}
+                else
+                    overlapParams.FilterDescendantsInstances = {}
+                end
+                
+                local foundBlocks = {}
+                local seenBlocks = {}
+                local processedParents = {}
+                
+                local parts = game:GetService("Workspace"):GetPartBoundsInBox(cframe, regionSize, overlapParams)
+                for i = 1, #parts do
+                    local part = parts[i]
+                    local parent = part.Parent
+                    
+                    if not parent or seenBlocks[parent] or processedParents[parent] then continue end
+
+                    local block = BlockUtils.getIslandBlockFromChild(part)
+                    if block then
+                        if not seenBlocks[block] then
+                            seenBlocks[block] = true
+                            local isValid = false
+                            if block:FindFirstChild("stage") then
+                                local meta = BlockMeta[block.Name]
+                                if meta then
+                                    local noHarvest = meta.noPlayerHarvest
+                                    if not noHarvest and meta.cropHarvestConfig then isValid = true end
+                                end
+                            end
+                            if isValid then table.insert(foundBlocks, block) end
+                        end
+                        if parent ~= block then processedParents[parent] = true end
+                    else
+                        processedParents[parent] = true
+                    end
+                end
+                
+                return ArrayUtil.sortReduced(foundBlocks, overridelimit, function(a, b)
+                    local distA = a.Position - position
+                    local distB = b.Position - position
+                    return distA:Dot(distA) < distB:Dot(distB)
+                end)
+            end
+            Window:Notify({Title = "Sickle", Content = "Range Bypass Enabled"})
+        else
+            if OldSickle then
+                SickleUtils.SickleUtils.getNearbyBlocks = OldSickle
+                Window:Notify({Title = "Sickle", Content = "Range Bypass Disabled"})
+            end
+        end
+    end
+})
+end
+
+local SeedCrops = {
+    "onion", "carrot", "wheat", "berryBush", "blackberryBush", "blueberryBush", "cactus", "candyCane", "chiliPepper", "cranberryBush", "crystallineIvy", "dragonfruit", "grape", "melon", "optuntia", "pineapple", "potato", "pumpkin", "radish", "raspberryBush", "rice", "seaweed", "spinach", "spirit", "starfruit", "strawberryBush", "tomato", "vineStem", "voidParasite"
+}
+local FormattedSeeds = {}
+local SeedMap = {}
+for _, c in ipairs(SeedCrops) do
+    local display = FixName(c)
+    table.insert(FormattedSeeds, display)
+    SeedMap[display] = c
+end
+table.sort(FormattedSeeds)
+
+if IsExecComp then
+    MiscTab:CreateToggle({
+        Name = "Seed Spreader Override",
+        CurrentValue = false,
+        Callback = function(Value)
+            Config.State.SeedSpreaderEnabled = Value
+        end
+    })
+
+    task.spawn(function()
+        if _G.SeedSpreaderHooked then return end
+        local mt = getrawmetatable(game)
+        OldNC = mt.__namecall
+        setreadonly(mt, false)
+
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod and getnamecallmethod()
+            if not method then return OldNC(self, ...) end
+            local args = {...}
+
+            if method == "InvokeServer" and self.Name == "CLIENT_BLOCK_PLACE_REQUEST" and Config.State.SeedSpreaderEnabled then
+                local char = Players.LocalPlayer.Character
+                local tool = char and char:FindFirstChildWhichIsA("Tool")
+                if tool and string.find(string.lower(tool.Name), "seedspreader") and type(args[1]) == "table" then
+                    local block = args[1].blockType
+                    if block then
+                        args[1].blockType = Config.State.SelectedSeed
+                    end
+                end
+            end
+
+            if setnamecallmethod then
+                setnamecallmethod(method)
+            end
+            return OldNC(self, unpack(args))
+        end)
+        setreadonly(mt, true)
+        _G.SeedSpreaderHooked = true
+    end)
+
+    MiscTab:CreateDropdown({
+        Name = "Select Seed",
+        Options = FormattedSeeds,
+        CurrentOption = {"Wheat"},
+        Callback = function(Option)
+            local display = Option[1]
+            Config.State.SelectedSeed = SeedMap[display] or "wheat"
+        end
+    })
+else
+    MiscTab:CreateButton({
+        Name = "Executor Not Supported",
+        Callback = function()
+            Window:Notify({Title = "Error", Content = "Executor missing required functions"})
+        end
+    })
+end
+
+MiscTab:CreateSection("Food Automation")
+local EatThread = nil
+MiscTab:CreateToggle({
+    Name = "Loop Eat Held Item",
+    CurrentValue = false,
+    Callback = function(Value)
+        Config.State.EatLoopEnabled = Value
+        if Config.State.EatLoopEnabled then
+            EatThread = task.spawn(function()
+                while Config.State.EatLoopEnabled do
+                    pcall(function()
+                        local char = LocalPlayer.Character
+                        if char then
+                            local tool = char:FindFirstChildWhichIsA("Tool")
+                            if tool then
+                                CLIENT_EAT_FOOD:InvokeServer({tool = tool})
+                            end
+                        end
+                    end)
+                    task.wait(Config.Delay.EatLoop)
+                end
+            end)
+            AddLoop(EatThread)
+        else
+            if EatThread then
+                task.cancel(EatThread)
+                EatThread = nil
+            end
+        end
+    end
+})
+
+MiscTab:CreateSlider({
+    Name = "Eat Loop Delay",
+    Range = {0.1, 900},
+    Increment = 0.1,
+    Suffix = "s",
+    CurrentValue = Config.Delay.EatLoop,
+    Callback = function(Value)
+        Config.Delay.EatLoop = Value
+    end
+})
+
+MiscTab:CreateSection("UI Customization")
+MiscTab:CreateInput({
+    Name = "Join Code Spoofer",
+    PlaceholderText = "Enter code...",
+    Callback = function(Text)
+        local jc = LocalPlayer:FindFirstChild("JoinCode")
+        if jc then jc.Value = Text end
+    end
+})
+
+MiscTab:CreateToggle({
+    Name = "Hardcore Mode UI",
+    CurrentValue = false,
+    Callback = function(Value)
+        local hc = LocalPlayer:FindFirstChild("HardcoreMode")
+        if hc then hc.Value = Value end
+    end
+})
+
+MiscTab:CreateSection("Extra")
+MiscTab:CreateInput({
+    Name = "Player Username",
+    PlaceholderText = "Username",
+    Callback = function(Text)
+        Config.State.InviteUsername = Text
+    end
+})
+
+MiscTab:CreateButton({
+    Name = "Invite Player",
+    Callback = function()
+        if Config.State.InviteUsername == "" then return end
+        task.spawn(function()
+            local success, userId = pcall(function()
+                return Players:GetUserIdFromNameAsync(Config.State.InviteUsername)
+            end)
+            if success and userId then
+                local CLIENT_INVITE = ReplicatedStorage.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("client_request_8")
+                CLIENT_INVITE:InvokeServer({
+                    userId = userId,
+                    name = Config.State.InviteUsername
+                })
+                Window:Notify({Title = "Invite Sent", Content = "Invited " .. Config.State.InviteUsername})
+            else
+                Window:Notify({Title = "Invite Failed", Content = "Could not find user"})
+            end
+        end)
+    end
+})
+
+SettingsTab:CreateSection("Visuals")
+SettingsTab:CreateToggle({
+    Name = "Show Vending Radius",
+    CurrentValue = false,
+    Callback = function(Value)
+        Config.State.CircleToggle = Value
+        if not Value and Config.Cache.CircleLines then
+            for _, line in ipairs(Config.Cache.CircleLines) do
+                line.Visible = false
+            end
+        end
+    end
+})
+
+SettingsTab:CreateToggle({
+    Name = "Show Vending ESP",
+    CurrentValue = false,
+    Callback = function(Value)
+        Config.State.EspEnabled = Value
+        if not Config.State.EspEnabled then
+            Config.Cache.CachedVendingMachines = {}
+            Config.State.EspScannerActive = false
+            for _, labelData in pairs(Config.Cache.EspLabels) do
+                FreeLabel(labelData.label)
+            end
+            Config.Cache.EspLabels = {}
+            Config.Cache.EspCache = {}
+        else
+            if not Config.State.EspScannerActive then
+                Config.State.EspScannerActive = true
+                local thread = task.spawn(ScanLoop)
+                AddLoop(thread)
+            end
+        end
+    end
+})
+
+SettingsTab:CreateDivider()
+
+SettingsTab:CreateToggle({
+    Name = "Selection Mode (Alt+Click / Tap)",
+    CurrentValue = false,
+    Callback = function(Value)
+        Config.State.SelectionModeEnabled = Value
+        if not Value then
+            for vending, lines in pairs(Config.Cache.SelectionBoxLines) do
+                for _, line in ipairs(lines) do
+                    pcall(function() line:Remove() end)
+                end
+            end
+            Config.Cache.SelectionBoxLines = {}
+            Config.Cache.SelectedVendingMachines = {}
+        end
+    end
+})
+
+SettingsTab:CreateButton({
+    Name = "Clear Selection",
+    Callback = function()
+        for vending, lines in pairs(Config.Cache.SelectionBoxLines) do
+            for _, line in ipairs(lines) do
+                pcall(function() line:Remove() end)
+            end
+        end
+        Config.Cache.SelectionBoxLines = {}
+        Config.Cache.SelectedVendingMachines = {}
+        Config.Cache.VendingBoundingBox = {}
+        Window:Notify({Title = "Selection", Content = "Cleared"})
+    end
+})
+
+SettingsTab:CreateSection("Configuration")
+SettingsTab:CreateSlider({
+    Name = "Vending Radius",
+    Range = {5, 450},
+    Increment = 0.5,
+    Suffix = " studs",
+    CurrentValue = Config.Settings.VendingRadius,
+    Callback = function(Value)
+        if not Config.Settings.IgnoreRadius then
+            Config.Settings.VendingRadius = Value
+        end
+    end
+})
+
+SettingsTab:CreateSlider({
+    Name = "Max ESP Labels",
+    Range = {1, 100},
+    Increment = 1,
+    Suffix = " labels",
+    CurrentValue = Config.Settings.MaxEspLabels,
+    Callback = function(Value)
+        Config.Settings.MaxEspLabels = math.max(0, math.floor(Value))
+    end
+})
+
+SettingsTab:CreateToggle({
+    Name = "Ignore Radius",
+    CurrentValue = false,
+    Callback = function(Value)
+        Config.Settings.IgnoreRadius = Value
+        if Value then
+            Config.Settings.VendingRadius = 10000
+        else
+            Config.Settings.VendingRadius = 15
+        end
+    end
+})
+
+SettingsTab:CreateSection("Game Settings")
+local OldPerf = nil
+SettingsTab:CreateToggle({
+    Name = "Performance Mode",
+    CurrentValue = false,
+    Callback = function(Value)
+        local Lighting = game:GetService("Lighting")
+        if Value then
+            Lighting.GlobalShadows = false
+            Lighting.Technology = Enum.Technology.Compatibility
+        else
+            Lighting.GlobalShadows = true
+            Lighting.Technology = Enum.Technology.ShadowMap
+        end
+    end
+})
+
+local SeasonOptions = {"summer", "winter", "fall"}
+SettingsTab:CreateDropdown({
+    Name = "Season",
+    Options = SeasonOptions,
+    CurrentOption = {Config.State.SeasonChoice},
+    Callback = function(Option)
+        Config.State.SeasonChoice = Option[1] or "summer"
+    end
+})
+
+SettingsTab:CreateButton({
+    Name = "Set Season",
+    Callback = function()
+        local s = Config.State.SeasonChoice or "summer"
+        local seasonObj = Workspace:FindFirstChild("Season")
+        if seasonObj and seasonObj.Value ~= nil then
+            pcall(function() seasonObj.Value = s end)
+            Window:Notify({Title = "Season", Content = "Set Season to " .. s})
+        end
+    end
+})
+
+SettingsTab:CreateSection("Danger Zone")
+SettingsTab:CreateButton({
+    Name = "Unload Script",
+    Callback = function()
+        if _G.VendingManagerCleanup then
+            _G.VendingManagerCleanup()
+        end
+    end
+})
+
+local CircleSegments = 40
+for i = 1, CircleSegments do
+    local line = Drawing.new("Line")
+    line.Visible = false
+    line.Color = Color3.fromRGB(215, 100, 255)
+    line.Thickness = 2
+    line.Transparency = 1
+    table.insert(Config.Cache.CircleLines, line)
+end
+
+local function DrawCircle()
+    if not Config.State.CircleToggle and Config.Cache.CircleLines then
+        for _, line in ipairs(Config.Cache.CircleLines) do line.Visible = false end
+        return
+    end
+
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local center = hrp.Position
+    local cam = workspace.CurrentCamera
+    local step = (math.pi * 2) / CircleSegments
+    local radius = Config.Settings.VendingRadius
+
+    for i = 1, CircleSegments do
+        local line = Config.Cache.CircleLines[i]
+        local a1 = (i - 1) * step
+        local a2 = i * step
+        local p1 = center + Vector3.new(math.cos(a1) * radius, 0, math.sin(a1) * radius)
+        local p2 = center + Vector3.new(math.cos(a2) * radius, 0, math.sin(a2) * radius)
+        local v1, on1 = cam:WorldToViewportPoint(p1)
+        local v2, on2 = cam:WorldToViewportPoint(p2)
+        if on1 and on2 then
+            line.From = Vector2.new(v1.X, v1.Y)
+            line.To = Vector2.new(v2.X, v2.Y)
+            line.Visible = true
+        else
+            line.Visible = false
+        end
+    end
+end
+
+AddConn(RunService.RenderStepped:Connect(function()
+    DrawCircle()
+    RenderEsp()
+    if Config.State.SelectionModeEnabled then
+        DrawBoxes()
+    end
+end))
+
+AddConn(RunService.Heartbeat:Connect(function(deltaTime)
+    ScanEsp()
+    if Config.State.OpeningEnabled then
+        Config.State.LastOpeningTime = Config.State.LastOpeningTime + deltaTime
+        if Config.State.LastOpeningTime >= Config.Delay.OpeningSpeed then
+            Config.State.LastOpeningTime = 0
+            CLIENT_REQUEST_22:InvokeServer({})
+        end
+    end
+end))
+
+local function MouseVending(inputPos)
+    local camera = workspace.CurrentCamera
+    local pos = inputPos
+    if not pos then
+        local mPos = UserInputService:GetMouseLocation()
+        pos = Vector3.new(mPos.X, mPos.Y, 0)
+    end
+    
+    local unitRay = camera:ScreenPointToRay(pos.X, pos.Y)
+    
+    local islands = Workspace:FindFirstChild("Islands")
+    if not islands then return nil end
+    
+    local closest = nil
+    local closestDist = math.huge
+    
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local searchRadius = 100
+    
+    for _, island in ipairs(islands:GetChildren()) do
+        local blocks = island:FindFirstChild("Blocks")
+        if not blocks then continue end
+        
+        for _, v in ipairs(blocks:GetChildren()) do
+            if v.Name ~= "vendingMachine1" and v.Name ~= "vendingMachine" and v.Name ~= "vendingMachineIndustrial" then continue end
+            
+            local part = v:FindFirstChildWhichIsA("BasePart")
+            if not part then continue end
+            
+            if hrp and (part.Position - hrp.Position).Magnitude > searchRadius then continue end
+            
+            local bbox = GetBox(v)
+            if not bbox then continue end
+            
+            local minP, maxP = bbox.min, bbox.max
+            local rayOrigin = unitRay.Origin
+            local rayDirection = unitRay.Direction
+            
+            local components = {{rayOrigin.X, rayDirection.X}, {rayOrigin.Y, rayDirection.Y}, {rayOrigin.Z, rayDirection.Z}}
+            local minBounds = {minP.X, minP.Y, minP.Z}
+            local maxBounds = {maxP.X, maxP.Y, maxP.Z}
+            
+            local tmin, tmax = -math.huge, math.huge
+            local hit = true
+            for axis = 1, 3 do
+                local rayOrig = components[axis][1]
+                local rayDir = components[axis][2]
+                if math.abs(rayDir) > 1e-6 then
+                    local t1 = (minBounds[axis] - rayOrig) / rayDir
+                    local t2 = (maxBounds[axis] - rayOrig) / rayDir
+                    if t1 > t2 then t1, t2 = t2, t1 end
+                    tmin = math.max(tmin, t1)
+                    tmax = math.min(tmax, t2)
+                elseif rayOrig < minBounds[axis] or rayOrig > maxBounds[axis] then
+                    hit = false
+                    break
+                end
+            end
+            
+            if hit and tmin <= tmax and tmin > 0 then
+                if tmin < closestDist then
+                    closestDist = tmin
+                    closest = v
+                end
+            end
+        end
+    end
+    
+    return closest
+end
+
+AddConn(UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not Config.State.SelectionModeEnabled then return end
+    
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        local isCtrlHeld = UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt) or
+                            UserInputService:IsKeyDown(Enum.KeyCode.LeftMeta) or UserInputService:IsKeyDown(Enum.KeyCode.RightMeta)
+        
+        if gameProcessed and not isCtrlHeld then return end
+
+        if isCtrlHeld or input.UserInputType == Enum.UserInputType.Touch then
+            local vending = MouseVending(input.Position)
+            if vending then
+                Config.Cache.SelectedVendingMachines[vending] = not Config.Cache.SelectedVendingMachines[vending]
+                if not Config.Cache.SelectedVendingMachines[vending] then
+                    Config.Cache.SelectedVendingMachines[vending] = nil
+                end
+            end
+        end
+    end
+end))
+
+AddConn(LocalPlayer.OnTeleport:Connect(function(State)
+    if _G.VendingManagerCleanup then
+        _G.VendingManagerCleanup()
+    end
+end))
+
+_G.VendingManagerCleanup = function()
+    if Config.State.IsCleaningUp then return end
+    Config.State.IsCleaningUp = true
+
+    if BlurModule and BlurModule.Cleanup then BlurModule.Cleanup() end
+
+    for _, conn in ipairs(Config.Cache.ActiveConnections) do
+        if conn then conn:Disconnect() end
+    end
+    Config.Cache.ActiveConnections = {}
+
+    for _, thread in ipairs(Config.Cache.ActiveLoops) do
+        if thread then task.cancel(thread) end
+    end
+    Config.Cache.ActiveLoops = {}
+
+    Config.State.LoopCoinEnabled = false
+    Config.State.LoopItemEnabled = false
+    Config.State.OpeningEnabled = false
+    Config.State.ChestOpenerEnabled = false
+    Config.State.ChestLoopEnabled = false
+    Config.State.AtmLoopEnabled = false
+    Config.State.EspScannerActive = false
+    Config.State.SeedSpreaderEnabled = false
+    Config.State.EatLoopEnabled = false
+
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        local bv = hrp:FindFirstChild("FarmBV")
+        if bv then bv:Destroy() end
+    end
+
+    if Config.Cache.CurrentFarmTween then
+        Config.Cache.CurrentFarmTween:Cancel()
+        Config.Cache.CurrentFarmTween = nil
+    end
+
+    if Config.Cache.NoclipConnection then
+        Config.Cache.NoclipConnection:Disconnect()
+        Config.Cache.NoclipConnection = nil
+    end
+
+    if OldNC then
+        local mt = getrawmetatable(game)
+        setreadonly(mt, false)
+        mt.__namecall = OldNC
+        setreadonly(mt, true)
+        OldNC = nil
+    end
+    _G.SeedSpreaderHooked = nil
+    
+    if OldSickle then
+        local TS = ReplicatedStorage:FindFirstChild("TS")
+        if TS then
+            local SickleUtilsModule = TS:FindFirstChild("tool") and TS.tool:FindFirstChild("tools") and TS.tool.tools:FindFirstChild("tool-utils") and TS.tool.tools["tool-utils"]:FindFirstChild("sickle-utils")
+            if SickleUtilsModule then
+                local s, m = pcall(require, SickleUtilsModule)
+                if s and m and m.SickleUtils then
+                    m.SickleUtils.getNearbyBlocks = OldSickle
+                end
+            end
+        end
+        OldSickle = nil
+    end
+
+    if Config.Cache.CircleLines then
+        for _, line in ipairs(Config.Cache.CircleLines) do line:Remove() end
+    end
+    Config.Cache.CircleLines = {}
+
+    if Config.Cache.SelectionBoxLines then
+        for _, lines in pairs(Config.Cache.SelectionBoxLines) do
+            for _, line in ipairs(lines) do line:Remove() end
+        end
+    end
+    Config.Cache.SelectionBoxLines = {}
+    
+    if Config.Cache.EspLabels then
+        for _, data in pairs(Config.Cache.EspLabels) do FreeLabel(data.label) end
+    end
+    Config.Cache.EspLabels = {}
+    if Config.Cache.LabelPool then
+        for _, lab in ipairs(Config.Cache.LabelPool) do lab:Remove() end
+    end
+    Config.Cache.LabelPool = {}
+
+    if Config.Cache.MountedInventoryView then
+        pcall(function()
+            local RoactModule = ReplicatedStorage:WaitForChild("rbxts_include"):WaitForChild("node_modules"):WaitForChild("@rbxts"):WaitForChild("roact"):WaitForChild("src")
+            local Roact = require(RoactModule)
+            Roact.unmount(Config.Cache.MountedInventoryView)
+        end)
+        Config.Cache.MountedInventoryView = nil
+    end
+
+    if Window and type(Window.Destroy) == "function" then Window:Destroy() end
+
+    _G.VendingManagerCleanup = nil
+end
