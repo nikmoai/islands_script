@@ -1067,7 +1067,7 @@ function Library:Create(title)
     return Window
 end
 
-local Window = Library:Create("Pooke's IVM")
+local Window = Library:Create("MOAI SCRIPT V1")
 
 local VendingTab = Window:CreateTab("Vending", "rbxassetid://6942650339")
 local ChestTab = Window:CreateTab("Chest", "rbxassetid://99252073072597")
