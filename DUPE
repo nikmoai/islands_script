@@ -1,0 +1,140 @@
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "Notifications"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = PlayerGui
+
+local notifications = Instance.new("Frame")
+notifications.Name = "1"
+notifications.Parent = ScreenGui
+notifications.AnchorPoint = Vector2.new(1, 1)
+notifications.Position = UDim2.new(1, -60, 1, -50)
+notifications.Size = UDim2.new(0, 400, 0.6, 0)
+notifications.BackgroundTransparency = 1
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.Parent = notifications
+listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+listLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Padding = UDim.new(0, 5)
+
+local COLORS = {
+	SUCCESS = Color3.fromRGB(153, 255, 175),
+}
+
+local MAX_NOTIFS = 20
+local notificationCount = 0
+
+local function enforceLimit()
+	while #notifications:GetChildren() - 1 > MAX_NOTIFS do
+		for _, child in ipairs(notifications:GetChildren()) do
+			if child:IsA("Frame") then
+				child:Destroy()
+				break
+			end
+		end
+	end
+end
+
+local function showNotification(text, color)
+	notificationCount = notificationCount + 1
+
+	local container = Instance.new("Frame")
+	container.Name = HttpService:GenerateGUID(false):upper()
+	container.Parent = notifications
+	container.BackgroundTransparency = 1
+	container.LayoutOrder = notificationCount
+	container.Size = UDim2.new(1, 0, 0, 26.5)
+	container.ZIndex = 10
+
+	enforceLimit()
+
+	local frame = Instance.new("Frame")
+	frame.Parent = container
+	frame.Size = UDim2.new(1, 0, 1, 0)
+	frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+	frame.BackgroundTransparency = 1
+	frame.BorderSizePixel = 0
+
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
+	pad.Parent = frame
+
+	local label = Instance.new("TextLabel")
+	label.Parent = frame
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.RichText = true
+	label.TextWrapped = true
+	label.TextScaled = false
+	label.TextSize = 25.5
+	label.Text = text
+	label.Font = Enum.Font.FredokaOne
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.TextYAlignment = Enum.TextYAlignment.Center
+	label.TextColor3 = color
+	label.TextStrokeTransparency = 1
+	label.TextTransparency = 1
+
+	local uiStroke = Instance.new("UIStroke")
+	uiStroke.Parent = label
+	uiStroke.Thickness = 1
+	uiStroke.Color = Color3.new(0, 0, 0)
+	uiStroke.Transparency = 1
+
+	task.spawn(function()
+		for i = 0, 1, 0.1 do
+			frame.BackgroundTransparency = 1 - (i * 0.1)
+			label.TextTransparency = 1 - i
+			uiStroke.Transparency = 1 - (i * 0.8)
+			task.wait(0.02)
+		end
+
+		task.wait(5)
+
+		for i = 1, 0, -0.1 do
+			frame.BackgroundTransparency = 1 - (i * 0.1)
+			label.TextTransparency = 1 - i
+			uiStroke.Transparency = 1 - (i * 0.8)
+			task.wait(0.04)
+		end
+
+		container:Destroy()
+	end)
+end
+
+task.spawn(function()
+	local Tools = ReplicatedStorage:WaitForChild("Tools")
+	local Backpack = LocalPlayer:WaitForChild("Backpack")
+	for _, tool in pairs(Tools:GetChildren()) do
+		if tool:IsA("Tool") then
+			task.wait(0.2)
+			local name = tool.Name
+			if tool:FindFirstChild("DisplayName") then
+				name = tool.DisplayName.Value
+			end
+
+			local amount = 1000000
+			local formattedAmount = "1,000,000"
+
+			showNotification("+ " .. formattedAmount .. " " .. name, COLORS.SUCCESS)
+
+			local newTool = tool:Clone()
+			local existingTool = Backpack:FindFirstChild(tool.Name)
+			if existingTool then
+				existingTool:Destroy()
+			end
+			if newTool:FindFirstChild("Amount") then
+				newTool.Amount.Value = amount
+			end
+			newTool.Parent = Backpack
+		end
+	end
+end)
