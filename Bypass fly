@@ -1,0 +1,189 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local player = Players.LocalPlayer
+local camera = Workspace.CurrentCamera
+
+local flying = false
+local flySpeed = 30
+local currentPosition = Vector3.zero
+
+local runTrack = nil
+local idleTrack = nil
+
+local function startFlying()
+    local char = player.Character
+    if not char then return end
+
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    flying = true
+    currentPosition = root.Position
+
+    local humanoid = char:FindFirstChild("Humanoid")
+    if humanoid then
+        humanoid.PlatformStand = true
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Running, false)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Climbing, false)
+    end
+end
+
+local function stopFlying()
+    flying = false
+
+    local char = player.Character
+    if not char then return end
+
+    local humanoid = char:FindFirstChild("Humanoid")
+    if humanoid then
+        humanoid.PlatformStand = false
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, true)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Running, true)
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Climbing, true)
+    end
+
+    if runTrack then
+        runTrack:Stop()
+        runTrack = nil
+    end
+    if idleTrack then
+        idleTrack:Stop()
+        idleTrack = nil
+    end
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode ~= Enum.KeyCode.LeftAlt then return end
+
+    if flying then
+        stopFlying()
+    else
+        startFlying()
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    if not flying then return end
+
+    local char = player.Character
+    if not char then return end
+
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+end)
+
+RunService.RenderStepped:Connect(function(dt)
+    if not flying then return end
+
+    local char = player.Character
+    if not char then return end
+
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local direction = Vector3.zero
+    local look = camera.CFrame.LookVector
+    local right = camera.CFrame.RightVector
+
+    if UserInputService:IsKeyDown(Enum.KeyCode.W) then direction += look end
+    if UserInputService:IsKeyDown(Enum.KeyCode.S) then direction -= look end
+    if UserInputService:IsKeyDown(Enum.KeyCode.D) then direction += right end
+    if UserInputService:IsKeyDown(Enum.KeyCode.A) then direction -= right end
+    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then direction += Vector3.yAxis end
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then direction -= Vector3.yAxis end
+
+    if direction.Magnitude > 0 then
+        direction = direction.Unit
+    end
+
+    currentPosition += direction * flySpeed * dt
+    root.CFrame = CFrame.new(currentPosition) * camera.CFrame.Rotation
+
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+
+    local humanoid = char:FindFirstChild("Humanoid")
+    if not humanoid then return end
+
+    if direction.Magnitude > 0 then
+        if idleTrack and idleTrack.IsPlaying then
+            idleTrack:Stop()
+        end
+
+        if not runTrack then
+            local animator = humanoid:FindFirstChildOfClass("Animator") or humanoid
+            local anim = Instance.new("Animation")
+
+            if humanoid.RigType == Enum.HumanoidRigType.R15 then
+                anim.AnimationId = "rbxassetid://507767714"
+            else
+                anim.AnimationId = "rbxassetid://180426354"
+            end
+
+            local animate = char:FindFirstChild("Animate")
+            if animate and animate:FindFirstChild("run") then
+                local runAnim = animate.run:FindFirstChild("RunAnim")
+                if runAnim and runAnim:IsA("Animation") then
+                    anim.AnimationId = runAnim.AnimationId
+                end
+            end
+
+            runTrack = animator:LoadAnimation(anim)
+        end
+
+        if not runTrack.IsPlaying then
+            runTrack:Play()
+        end
+        runTrack:AdjustSpeed(1.5)
+    else
+        if runTrack and runTrack.IsPlaying then
+            runTrack:Stop()
+        end
+
+        if not idleTrack then
+            local animator = humanoid:FindFirstChildOfClass("Animator") or humanoid
+            local anim = Instance.new("Animation")
+
+            if humanoid.RigType == Enum.HumanoidRigType.R15 then
+                anim.AnimationId = "rbxassetid://507766388"
+            else
+                anim.AnimationId = "rbxassetid://180435571"
+            end
+
+            local animate = char:FindFirstChild("Animate")
+            if animate and animate:FindFirstChild("idle") then
+                local idleAnim = animate.idle:FindFirstChild("Animation1")
+                if idleAnim and idleAnim:IsA("Animation") then
+                    anim.AnimationId = idleAnim.AnimationId
+                end
+            end
+
+            idleTrack = animator:LoadAnimation(anim)
+        end
+
+        if not idleTrack.IsPlaying then
+            idleTrack:Play()
+        end
+    end
+end)
+
+RunService.Stepped:Connect(function()
+    if not flying then return end
+
+    local char = player.Character
+    if not char then return end
+
+    for _, part in char:GetDescendants() do
+        if part:IsA("BasePart") and part.CanCollide then
+            part.CanCollide = false
+        end
+    end
+end)
