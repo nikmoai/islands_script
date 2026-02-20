@@ -1,0 +1,616 @@
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+local NotificationGui = PlayerGui:FindFirstChild("Notifications")
+local notifications
+local createdNotificationGui = false
+
+if NotificationGui and NotificationGui:FindFirstChild("1") then
+    notifications = NotificationGui["1"]
+else
+    NotificationGui = Instance.new("ScreenGui")
+    NotificationGui.Name = "Notifications"
+    NotificationGui.ResetOnSpawn = false
+    NotificationGui.Parent = PlayerGui
+    createdNotificationGui = true
+
+    notifications = Instance.new("Frame")
+    notifications.Name = "1"
+    notifications.Parent = NotificationGui
+    notifications.AnchorPoint = Vector2.new(1, 1)
+    notifications.Position = UDim2.new(0.96, 0, 0.95, 0)
+    notifications.Size = UDim2.new(0.2, 0, 0.25, 0)
+    notifications.BackgroundTransparency = 1
+end
+
+local listLayout = notifications:FindFirstChildWhichIsA("UIListLayout") or Instance.new("UIListLayout")
+listLayout.Parent = notifications
+listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+listLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Padding = UDim.new(0, 5)
+
+local COLORS = {
+    SUCCESS = Color3.fromRGB(153, 255, 175),
+    FAILURE = Color3.fromRGB(255, 153, 153),
+}
+
+local MAX_NOTIFS = 15
+local notificationCount = 0
+for _, child in ipairs(notifications:GetChildren()) do
+    if child:IsA("GuiObject") and child.LayoutOrder > notificationCount then
+        notificationCount = child.LayoutOrder
+    end
+end
+
+local notificationConnection
+local function enforceLimit()
+    local children = notifications:GetChildren()
+    local guiObjects = {}
+    for _, child in ipairs(children) do
+        if child:IsA("GuiObject") then
+            table.insert(guiObjects, child)
+        end
+    end
+
+    if #guiObjects > MAX_NOTIFS then
+        table.sort(guiObjects, function(a, b)
+            return a.LayoutOrder < b.LayoutOrder
+        end)
+        
+        for i = 1, #guiObjects - MAX_NOTIFS do
+            guiObjects[i]:Destroy()
+        end
+    end
+end
+
+notificationConnection = notifications.ChildAdded:Connect(function(child)
+    if child:IsA("GuiObject") then
+        if child.LayoutOrder ~= notificationCount then
+            notificationCount = notificationCount + 1
+            child.LayoutOrder = notificationCount
+        end
+        enforceLimit()
+    end
+end)
+
+local function showNotification(text, color)
+    notificationCount = notificationCount + 1
+
+    local container = Instance.new("Frame")
+    container.Name = HttpService:GenerateGUID(false):upper()
+    container.BackgroundTransparency = 1
+    container.LayoutOrder = notificationCount
+    container.Size = UDim2.new(1, 0, 0.1, 0)
+    container.ZIndex = 10
+    container.Parent = notifications
+
+    local frame = Instance.new("Frame")
+    frame.Parent = container
+    frame.Size = UDim2.new(1, 0, 1, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    frame.BackgroundTransparency = 1
+    frame.BorderSizePixel = 0
+
+    local pad = Instance.new("UIPadding")
+    pad.PaddingLeft = UDim.new(0, 10)
+    pad.PaddingRight = UDim.new(0, 10)
+    pad.Parent = frame
+
+    local label = Instance.new("TextLabel")
+    label.Parent = frame
+    label.Size = UDim2.fromScale(1, 1)
+    label.BackgroundTransparency = 1
+    label.RichText = true
+    label.TextWrapped = true
+    label.TextScaled = true
+    label.Text = text
+    label.FontFace = Font.new("rbxasset://fonts/families/FredokaOne.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextYAlignment = Enum.TextYAlignment.Center
+    label.TextColor3 = color
+    label.TextStrokeTransparency = 1
+    label.TextTransparency = 1
+
+    local uiStroke = Instance.new("UIStroke")
+    uiStroke.Parent = label
+	uiStroke.Thickness = 1.4
+	uiStroke.Color = Color3.fromRGB(0, 0, 0)
+    uiStroke.Transparency = 1
+
+    local lastUpdate = tick()
+    local function bumpTimer()
+        lastUpdate = tick()
+    end
+
+    task.spawn(function()
+        for i = 0, 1, 0.1 do
+            frame.BackgroundTransparency = 1 - (i * 0.1)
+            label.TextTransparency = 1 - i
+			uiStroke.Transparency = 1 - (i * 0.5)
+            task.wait(0.02)
+        end
+
+        while tick() - lastUpdate < 5 do
+            task.wait(0.1)
+        end
+
+        for i = 1, 0, -0.1 do
+            frame.BackgroundTransparency = 1 - (i * 0.1)
+            label.TextTransparency = 1 - i
+			uiStroke.Transparency = 1 - (i * 0.5)
+            task.wait(0.02)
+        end
+
+        container:Destroy()
+    end)
+
+    return label, container, bumpTimer
+end
+
+local activeCoinLabel
+local activeCoinContainer
+local activeCoinBump
+local currentCoinStack = 0
+
+if not _G.CoinDupeData then
+    _G.CoinDupeData = {
+        Offset = 0,
+        DupedMachines = {},
+        CoinListener = nil,
+        isLooping = false,
+        loopThread = nil
+    }
+end
+local Data = _G.CoinDupeData
+
+if _G.CoinDupeCleanup then
+    _G.CoinDupeCleanup()
+end
+
+local Verified = false
+local KeyGui = Instance.new("ScreenGui")
+KeyGui.Name = "KeySystem"
+if gethui then KeyGui.Parent = gethui() else KeyGui.Parent = CoreGui end
+
+local KFrame = Instance.new("Frame")
+KFrame.Size = UDim2.new(0, 300, 0, 130)
+KFrame.Position = UDim2.new(0.5, -150, 0.5, -65)
+KFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+KFrame.BorderSizePixel = 0
+KFrame.Active = true
+KFrame.Draggable = true
+KFrame.Parent = KeyGui
+
+local KCorner = Instance.new("UICorner")
+KCorner.CornerRadius = UDim.new(0, 12)
+KCorner.Parent = KFrame
+
+local KTitle = Instance.new("TextLabel")
+KTitle.Size = UDim2.new(1, 0, 0, 35)
+KTitle.BackgroundTransparency = 1
+KTitle.Text = "Key System"
+KTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+KTitle.Font = Enum.Font.GothamBold
+KTitle.TextSize = 16
+KTitle.Parent = KFrame
+
+local KInput = Instance.new("TextBox")
+KInput.Size = UDim2.new(0.8, 0, 0, 35)
+KInput.Position = UDim2.new(0.1, 0, 0.35, 0)
+KInput.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+KInput.PlaceholderText = "Enter Key"
+KInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+KInput.Font = Enum.Font.Gotham
+KInput.TextSize = 14
+KInput.Parent = KFrame
+
+local KInputCorner = Instance.new("UICorner")
+KInputCorner.CornerRadius = UDim.new(0, 8)
+KInputCorner.Parent = KInput
+
+local KSubmit = Instance.new("TextButton")
+KSubmit.Size = UDim2.new(0.5, 0, 0, 30)
+KSubmit.Position = UDim2.new(0.25, 0, 0.7, 0)
+KSubmit.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+KSubmit.Text = "Submit"
+KSubmit.TextColor3 = Color3.fromRGB(255, 255, 255)
+KSubmit.Font = Enum.Font.GothamBold
+KSubmit.TextSize = 14
+KSubmit.Parent = KFrame
+
+local KSubmitCorner = Instance.new("UICorner")
+KSubmitCorner.CornerRadius = UDim.new(0, 8)
+KSubmitCorner.Parent = KSubmit
+
+KSubmit.MouseButton1Click:Connect(function()
+    if KInput.Text == "islandsdupe@6767" then
+        Verified = true
+        KeyGui:Destroy()
+    else
+        KInput.Text = ""
+        KInput.PlaceholderText = "Invalid Key"
+    end
+end)
+
+repeat task.wait(0.1) until Verified
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "CoinDupeUI"
+ScreenGui.ResetOnSpawn = false
+if gethui then
+    ScreenGui.Parent = gethui()
+else
+    ScreenGui.Parent = CoreGui
+end
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 300, 0, 175)
+MainFrame.Position = UDim2.new(0.5, -150, 0.5, -87.5)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 12)
+UICorner.Parent = MainFrame
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 35)
+Title.BackgroundTransparency = 1
+Title.Text = "Coin Dupe"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 16
+Title.Parent = MainFrame
+
+local CloseButton = Instance.new("TextButton")
+CloseButton.Size = UDim2.new(0, 24, 0, 24)
+CloseButton.Position = UDim2.new(1, -30, 0, 6)
+CloseButton.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+CloseButton.Text = "X"
+CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseButton.Font = Enum.Font.GothamBold
+CloseButton.TextSize = 14
+CloseButton.Parent = MainFrame
+CloseButton.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+end)
+
+local CloseCorner = Instance.new("UICorner")
+CloseCorner.CornerRadius = UDim.new(0, 6)
+CloseCorner.Parent = CloseButton
+
+local SetBalanceButton = Instance.new("TextButton")
+SetBalanceButton.Size = UDim2.new(0.8, 0, 0, 35)
+SetBalanceButton.Position = UDim2.new(0.1, 0, 0, 45)
+SetBalanceButton.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+SetBalanceButton.Text = "Dupe Coins"
+SetBalanceButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+SetBalanceButton.Font = Enum.Font.GothamBold
+SetBalanceButton.TextSize = 14
+SetBalanceButton.Parent = MainFrame
+
+local BtnCorner = Instance.new("UICorner")
+BtnCorner.CornerRadius = UDim.new(0, 8)
+BtnCorner.Parent = SetBalanceButton
+
+local CounterLabel = Instance.new("TextLabel")
+CounterLabel.Size = UDim2.new(1, 0, 0, 25)
+CounterLabel.Position = UDim2.new(0, 0, 0, 135)
+CounterLabel.BackgroundTransparency = 1
+CounterLabel.Text = "Amount Duped: 0"
+CounterLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+CounterLabel.Font = Enum.Font.GothamBold
+CounterLabel.TextSize = 14
+CounterLabel.Parent = MainFrame
+
+local LoopDupeToggle = Instance.new("TextButton")
+LoopDupeToggle.Name = "LoopDupeToggle"
+LoopDupeToggle.Size = UDim2.new(0.8, 0, 0, 35)
+LoopDupeToggle.Position = UDim2.new(0.1, 0, 0, 90)
+LoopDupeToggle.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+LoopDupeToggle.Text = "Loop Dupe: Off"
+LoopDupeToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+LoopDupeToggle.Font = Enum.Font.GothamBold
+LoopDupeToggle.TextSize = 14
+LoopDupeToggle.Parent = MainFrame
+
+local LoopBtnCorner = Instance.new("UICorner")
+LoopBtnCorner.CornerRadius = UDim.new(0, 8)
+LoopBtnCorner.Parent = LoopDupeToggle
+
+local isUpdatingCoin = false
+
+local activeCoinLabel
+local activeCoinContainer
+local activeCoinBump
+local currentCoinStack = 0
+
+local function formatNumber(num)
+    local formatted = tostring(math.floor(num))
+    while true do  
+        formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", '%1,%2')
+        if k == 0 then break end
+    end
+    return formatted
+end
+
+local function registerDupedMachine(coinVal, newOffset, realValue)
+    if Data.DupedMachines[coinVal] then
+        if Data.DupedMachines[coinVal].Connection then Data.DupedMachines[coinVal].Connection:Disconnect() end
+        if Data.DupedMachines[coinVal].AncestryConnection then Data.DupedMachines[coinVal].AncestryConnection:Disconnect() end
+    end
+
+    local isUpdating = false
+    local conn = coinVal.Changed:Connect(function(newVal)
+        if isUpdating then return end
+        if Data.DupedMachines[coinVal] then
+            Data.DupedMachines[coinVal].RealValue = newVal
+        end
+        isUpdating = true
+        coinVal.Value = math.max(0, newVal + newOffset)
+        isUpdating = false
+    end)
+
+    local ancestryConn
+    ancestryConn = coinVal.AncestryChanged:Connect(function(_, parent)
+        if not parent then
+            if ancestryConn then ancestryConn:Disconnect() end
+            if newOffset ~= 0 then
+                Data.Offset = Data.Offset + newOffset
+                local currentDisplay = LocalPlayer:GetAttribute("Coins") or 0
+                isUpdatingCoin = true
+                LocalPlayer:SetAttribute("Coins", math.max(0, currentDisplay + newOffset))
+                isUpdatingCoin = false
+            end
+
+            local currentReal = realValue
+            if Data.DupedMachines[coinVal] and Data.DupedMachines[coinVal].RealValue then
+                currentReal = Data.DupedMachines[coinVal].RealValue
+            end
+            local totalAmount = currentReal + newOffset
+
+            if totalAmount > 0 then
+                if activeCoinLabel and activeCoinContainer and activeCoinContainer.Parent then
+                    currentCoinStack = currentCoinStack + totalAmount
+                    activeCoinLabel.Text = "+ " .. formatNumber(currentCoinStack) .. " Coins"
+                    if activeCoinBump then activeCoinBump() end
+                else
+                    currentCoinStack = totalAmount
+                    activeCoinLabel, activeCoinContainer, activeCoinBump = showNotification("+ " .. formatNumber(currentCoinStack) .. " Coins", COLORS.SUCCESS)
+                end
+            end
+            Data.DupedMachines[coinVal] = nil
+        end
+    end)
+
+    Data.DupedMachines[coinVal] = { Connection = conn, AncestryConnection = ancestryConn, Offset = newOffset, RealValue = realValue }
+    
+    isUpdating = true
+    coinVal.Value = math.max(0, realValue + newOffset)
+    isUpdating = false
+end
+
+local function parseAmount(txt)
+    txt = txt:gsub(",", "")
+    local num = tonumber(txt)
+    if not num then
+        local val, suffix = txt:match("([%d%.]+)(%a+)")
+        if val and suffix then
+            val = tonumber(val)
+            suffix = suffix:lower()
+            if suffix == "k" then num = val * 1000
+            elseif suffix == "m" then num = val * 1000000
+            elseif suffix == "b" then num = val * 1000000000
+            end
+        end
+    end
+    return math.max(0, num or 0)
+end
+
+local dupeDebounce = false
+local totalDupedAmount = 0
+
+local function performDupe()
+    if dupeDebounce then return end
+    dupeDebounce = true
+    local currentAttribute = LocalPlayer:GetAttribute("Coins") or 0
+    local targetAmount = currentAttribute + 1500000000
+    
+    local realBalance = currentAttribute - Data.Offset
+    
+    isUpdatingCoin = true
+    
+    Data.Offset = targetAmount - realBalance
+    LocalPlayer:SetAttribute("Coins", targetAmount)
+    isUpdatingCoin = false
+    
+    if not Data.CoinListener then
+        Data.CoinListener = LocalPlayer:GetAttributeChangedSignal("Coins"):Connect(function()
+            if isUpdatingCoin then return end
+            local newVal = LocalPlayer:GetAttribute("Coins") or 0
+            
+            isUpdatingCoin = true
+            LocalPlayer:SetAttribute("Coins", math.max(0, newVal + Data.Offset))
+            isUpdatingCoin = false
+        end)
+    end
+    
+    totalDupedAmount = totalDupedAmount + 1500000000
+    CounterLabel.Text = "Amount Duped: " .. formatNumber(totalDupedAmount)
+    
+    if activeCoinLabel and activeCoinContainer and activeCoinContainer.Parent then
+        currentCoinStack = currentCoinStack + 1500000000
+        activeCoinLabel.Text = "+ " .. formatNumber(currentCoinStack) .. " Coins"
+        if activeCoinBump then activeCoinBump() end
+    else
+        currentCoinStack = 1500000000
+        activeCoinLabel, activeCoinContainer, activeCoinBump = showNotification("+ " .. formatNumber(currentCoinStack) .. " Coins", COLORS.SUCCESS)
+    end
+    
+    dupeDebounce = false
+end
+
+local dupeButtonDebounce = false
+SetBalanceButton.MouseButton1Click:Connect(function()
+    if dupeButtonDebounce then return end
+    dupeButtonDebounce = true
+    performDupe()
+    task.wait(math.random() * 0.15 + 0.3)
+    dupeButtonDebounce = false
+end)
+
+local loopButtonDebounce = false
+LoopDupeToggle.MouseButton1Click:Connect(function()
+    if loopButtonDebounce then return end
+    loopButtonDebounce = true
+
+    Data.isLooping = not Data.isLooping
+
+    if Data.isLooping then
+        LoopDupeToggle.Text = "Loop Dupe: On"
+        LoopDupeToggle.BackgroundColor3 = Color3.fromRGB(60, 200, 60)
+        
+        Data.loopThread = task.spawn(function()
+            while Data.isLooping do
+                performDupe()
+                task.wait(math.random() * 0.15 + 0.3)
+            end
+        end)
+    else
+        LoopDupeToggle.Text = "Loop Dupe: Off"
+        LoopDupeToggle.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+        if Data.loopThread then
+            task.cancel(Data.loopThread)
+            Data.loopThread = nil
+            dupeDebounce = false
+        end
+    end
+
+    task.wait(0.3)
+    loopButtonDebounce = false
+end)
+
+_G.CoinDupeCleanup = function()
+    if ScreenGui then ScreenGui:Destroy() end
+    if createdNotificationGui and NotificationGui then NotificationGui:Destroy() end
+    if notificationConnection then notificationConnection:Disconnect() end
+    
+    Data.isLooping = false
+    if Data.loopThread then
+        task.cancel(Data.loopThread)
+        Data.loopThread = nil
+    end
+
+    if Data.CoinListener then
+        Data.CoinListener:Disconnect()
+        Data.CoinListener = nil
+    end
+    
+    for _, machineData in pairs(Data.DupedMachines) do
+        if machineData.Connection then machineData.Connection:Disconnect() end
+        if machineData.AncestryConnection then machineData.AncestryConnection:Disconnect() end
+    end
+    Data.DupedMachines = {}
+end
+
+_G.CoinDupeHandler = function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+    
+    if (method == "FireServer" or method == "InvokeServer") and typeof(self) == "Instance" and (self.ClassName == "RemoteEvent" or self.ClassName == "RemoteFunction") then
+        local knownWithdrawRemotes = {
+            ["deGzdggahhjo/ytaJiyomainKgxefgrkF"] = true,
+        }
+        local knownDepositRemotes = {
+            ["deGzdggahhjo/ggzImj"] = true
+        }
+        
+        local isWithdraw = knownWithdrawRemotes[self.Name]
+        local isDeposit = knownDepositRemotes[self.Name]
+        
+        if method == "FireServer" and (isWithdraw or isDeposit) then
+            pcall(function()
+                local dataTable = args[2]
+                if type(dataTable) == "table" then
+                    for _, data in pairs(dataTable) do
+                        if type(data) == "table" and data.vendingMachine and data.amount then
+                            local amount = tonumber(data.amount) or 0
+                            local vending = data.vendingMachine
+                            
+                            if amount > 0 then
+                                local currentCoins = LocalPlayer:GetAttribute("Coins") or 0
+                                
+                                local coinVal = vending:FindFirstChild("CoinBalance")
+                                local currentVendingBalance = coinVal and coinVal.Value or 0
+                                
+                                if isDeposit then
+                                    if currentCoins < amount then return end
+                                    if currentVendingBalance + amount > 5000000000 then return end
+                                elseif isWithdraw then
+                                    if currentVendingBalance < amount then return end
+                                end
+
+                                if isWithdraw then
+                                    if activeCoinLabel and activeCoinContainer and activeCoinContainer.Parent then
+                                        currentCoinStack = currentCoinStack + amount
+                                        activeCoinLabel.Text = "+ " .. formatNumber(currentCoinStack) .. " Coins"
+                                        if activeCoinBump then activeCoinBump() end
+                                    else
+                                        currentCoinStack = amount
+                                        activeCoinLabel, activeCoinContainer, activeCoinBump = showNotification("+ " .. formatNumber(currentCoinStack) .. " Coins", COLORS.SUCCESS)
+                                    end
+                                end
+
+                                local multiplier = isWithdraw and 1 or -1
+                                
+                                Data.Offset = Data.Offset + (amount * multiplier)
+                                isUpdatingCoin = true
+                                LocalPlayer:SetAttribute("Coins", math.max(0, currentCoins + (amount * multiplier)))
+                                isUpdatingCoin = false
+                                
+                                if coinVal then
+                                    local currentOffset = 0
+                                    if Data.DupedMachines[coinVal] then
+                                        currentOffset = Data.DupedMachines[coinVal].Offset
+                                    end
+                                    
+                                    local newOffset = currentOffset - (amount * multiplier)
+                                    local realValue = coinVal.Value - currentOffset
+                                    
+                                    registerDupedMachine(coinVal, newOffset, realValue)
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+            return true
+        end
+    end
+    return false
+end
+
+task.spawn(function()
+    if not hookmetamethod then return end
+    if _G.CoinDupeHookLoaded then return end
+    _G.CoinDupeHookLoaded = true
+    
+    local __namecall
+    __namecall = hookmetamethod(game, "__namecall", function(self, ...)
+        if _G.CoinDupeHandler and _G.CoinDupeHandler(self, ...) then
+            return
+        end
+        
+        return __namecall(self, ...)
+    end)
+end)
